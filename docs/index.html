@@ -3,348 +3,446 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>🍎 Apple Products Global Price Tracker</title>
+  <title>🍎 Apple Global Price Tracker</title>
+
+  <!-- SEO / Social -->
+  <meta name="description" content="Compare Apple product prices across 50+ countries in real time. Find the cheapest country to buy any iPhone, MacBook, iPad, AirPods and more." />
+  <meta property="og:title"       content="Apple Global Price Tracker" />
+  <meta property="og:description" content="Live prices from every Apple storefront worldwide — sorted, compared, and streamed as they arrive." />
+  <meta property="og:type"        content="website" />
+  <meta property="og:image"       content="https://raw.githubusercontent.com/aruncs31s/apple-global-price-tracker/main/docs/og.png" />
+  <meta name="twitter:card"       content="summary_large_image" />
+  <meta name="theme-color"        content="#0071e3" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color"        content="#1c1c1e" media="(prefers-color-scheme: dark)" />
+
   <style>
-    /* ── Reset & base ── */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+/* ─── Reset ─────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    :root {
-      --bg:        #f5f5f7;
-      --surface:   #ffffff;
-      --border:    #d2d2d7;
-      --text:      #1d1d1f;
-      --muted:     #6e6e73;
-      --accent:    #0071e3;
-      --accent-h:  #0077ed;
-      --green:     #1a9e5c;
-      --red:       #d93025;
-      --gold:      #f5a623;
-      --radius:    14px;
-      --shadow:    0 2px 12px rgba(0,0,0,.08);
-    }
+/* ─── Tokens ─────────────────────────────────────────────────────────────── */
+:root {
+  --bg:          #f5f5f7;
+  --surface:     #ffffff;
+  --surface2:    #f5f5f7;
+  --border:      #d2d2d7;
+  --text:        #1d1d1f;
+  --muted:       #6e6e73;
+  --accent:      #0071e3;
+  --accent-h:    #0077ed;
+  --green:       #1a9e5c;
+  --green-bg:    #e6f4ea;
+  --red:         #d93025;
+  --red-bg:      #fce8e6;
+  --gold:        #c9a227;
+  --silver:      #9e9e9e;
+  --bronze:      #a0522d;
+  --radius:      14px;
+  --radius-sm:   8px;
+  --shadow:      0 2px 12px rgba(0,0,0,.08);
+  --shadow-md:   0 4px 24px rgba(0,0,0,.12);
+}
 
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
-                   "Segoe UI", Helvetica, Arial, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      min-height: 100vh;
-    }
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:       #000000;
+    --surface:  #1c1c1e;
+    --surface2: #2c2c2e;
+    --border:   #38383a;
+    --text:     #f5f5f7;
+    --muted:    #98989d;
+    --green-bg: #0d2e1a;
+    --red-bg:   #2d1210;
+    --shadow:   0 2px 12px rgba(0,0,0,.4);
+    --shadow-md:0 4px 24px rgba(0,0,0,.5);
+  }
+}
 
-    /* ── Header ── */
-    header {
-      background: rgba(255,255,255,.85);
-      backdrop-filter: saturate(180%) blur(20px);
-      -webkit-backdrop-filter: saturate(180%) blur(20px);
-      border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      z-index: 100;
-      padding: 0 24px;
-    }
-    .header-inner {
-      max-width: 1100px;
-      margin: 0 auto;
-      height: 52px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .header-inner svg { flex-shrink: 0; }
-    .header-inner h1 {
-      font-size: 17px;
-      font-weight: 600;
-      letter-spacing: -.3px;
-    }
+/* ─── Base ───────────────────────────────────────────────────────────────── */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+               "Segoe UI", Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
 
-    /* ── Hero / search ── */
-    .hero {
-      max-width: 680px;
-      margin: 56px auto 0;
-      padding: 0 24px;
-      text-align: center;
-    }
-    .hero h2 {
-      font-size: clamp(28px, 5vw, 44px);
-      font-weight: 700;
-      letter-spacing: -.5px;
-      line-height: 1.1;
-    }
-    .hero p {
-      margin-top: 12px;
-      color: var(--muted);
-      font-size: 17px;
-      line-height: 1.5;
-    }
+/* ─── Header ─────────────────────────────────────────────────────────────── */
+header {
+  background: rgba(255,255,255,.72);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 100;
+  padding: 0 24px;
+}
+@media (prefers-color-scheme: dark) {
+  header { background: rgba(28,28,30,.72); }
+}
+.header-inner {
+  max-width: 1100px; margin: 0 auto; height: 52px;
+  display: flex; align-items: center; gap: 10px;
+}
+.header-inner h1 { font-size: 17px; font-weight: 600; letter-spacing: -.3px; }
 
-    .search-box {
-      margin-top: 32px;
-      display: flex;
-      gap: 10px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 50px;
-      padding: 6px 6px 6px 20px;
-      box-shadow: var(--shadow);
-    }
-    .search-box input {
-      flex: 1;
-      border: none;
-      outline: none;
-      font-size: 16px;
-      background: transparent;
-      color: var(--text);
-      min-width: 0;
-    }
-    .search-box input::placeholder { color: var(--muted); }
-    .search-box button {
-      background: var(--accent);
-      color: #fff;
-      border: none;
-      border-radius: 44px;
-      padding: 10px 22px;
-      font-size: 15px;
-      font-weight: 600;
-      cursor: pointer;
-      white-space: nowrap;
-      transition: background .15s;
-    }
-    .search-box button:hover  { background: var(--accent-h); }
-    .search-box button:active { transform: scale(.97); }
-    .search-box button:disabled { opacity: .5; cursor: not-allowed; }
+/* ─── Hero ───────────────────────────────────────────────────────────────── */
+/* A — gradient background */
+.hero-wrap {
+  position: relative; overflow: hidden;
+  padding-bottom: 56px;
+}
+.hero-wrap::before {
+  content: "";
+  position: absolute; inset: -60px -40% 0;
+  background: radial-gradient(ellipse 70% 55% at 50% 0%,
+    rgba(0,113,227,.13) 0%, transparent 70%),
+    radial-gradient(ellipse 40% 30% at 20% 60%,
+    rgba(52,199,89,.10) 0%, transparent 60%),
+    radial-gradient(ellipse 40% 30% at 80% 70%,
+    rgba(255,149,0,.09) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+}
+@media (prefers-color-scheme: dark) {
+  .hero-wrap::before {
+    background: radial-gradient(ellipse 70% 55% at 50% 0%,
+      rgba(0,113,227,.22) 0%, transparent 70%),
+      radial-gradient(ellipse 40% 30% at 20% 60%,
+      rgba(52,199,89,.14) 0%, transparent 60%),
+      radial-gradient(ellipse 40% 30% at 80% 70%,
+      rgba(255,149,0,.12) 0%, transparent 60%);
+  }
+}
+.hero {
+  max-width: 680px; margin: 0 auto;
+  padding: 56px 24px 0; text-align: center;
+  position: relative; z-index: 1;
+}
+/* F — hero animates in on load */
+.hero { animation: heroIn .55s cubic-bezier(.22,.68,0,1.1) both; }
+@keyframes heroIn {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.hero h2 {
+  font-size: clamp(28px, 5vw, 44px);
+  font-weight: 700; letter-spacing: -.5px; line-height: 1.1;
+}
+.hero p { margin-top: 12px; color: var(--muted); font-size: 17px; line-height: 1.5; }
 
-    .suggestions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      justify-content: center;
-      margin-top: 16px;
-    }
-    .chip {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      padding: 6px 14px;
-      font-size: 13px;
-      cursor: pointer;
-      transition: border-color .15s, background .15s;
-      color: var(--accent);
-    }
-    .chip:hover { background: #e8f0fb; border-color: var(--accent); }
+/* ─── Search box ─────────────────────────────────────────────────────────── */
+.search-box {
+  margin-top: 32px; position: relative;
+  display: flex; gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 50px;
+  padding: 6px 6px 6px 20px;
+  box-shadow: var(--shadow);
+  transition: box-shadow .2s, border-color .2s;
+}
+.search-box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(0,113,227,.15), var(--shadow);
+}
+.search-box input {
+  flex: 1; border: none; outline: none;
+  font-size: 16px; background: transparent; color: var(--text); min-width: 0;
+}
+.search-box input::placeholder { color: var(--muted); }
+.clear-btn {
+  display: none; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--muted); border: none; cursor: pointer;
+  color: var(--surface); font-size: 11px; font-weight: 700;
+  flex-shrink: 0; align-self: center; opacity: .7;
+  transition: opacity .15s;
+}
+.clear-btn:hover { opacity: 1; }
+.search-box button {
+  background: var(--accent); color: #fff; border: none;
+  border-radius: 44px; padding: 10px 22px;
+  font-size: 15px; font-weight: 600; cursor: pointer;
+  white-space: nowrap; transition: background .15s, transform .1s;
+  flex-shrink: 0;
+}
+.search-box button:hover  { background: var(--accent-h); }
+.search-box button:active { transform: scale(.97); }
+.search-box button:disabled { opacity: .5; cursor: not-allowed; }
 
-    /* ── Status / error ── */
-    #status {
-      max-width: 1100px;
-      margin: 24px auto 0;
-      padding: 0 24px;
-      text-align: center;
-      color: var(--muted);
-      font-size: 15px;
-      min-height: 24px;
-    }
-    .error-msg {
-      color: var(--red);
-      background: #fce8e6;
-      border: 1px solid #f5c6c2;
-      border-radius: var(--radius);
-      padding: 14px 20px;
-      display: inline-block;
-      max-width: 560px;
-    }
+/* ─── Chips ──────────────────────────────────────────────────────────────── */
+.suggestions {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  justify-content: center; margin-top: 16px;
+}
+.chip {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 20px; padding: 6px 14px; font-size: 13px;
+  cursor: pointer; transition: border-color .15s, background .15s, transform .1s;
+  color: var(--accent);
+}
+.chip:hover { background: var(--surface2); border-color: var(--accent); }
+.chip:active { transform: scale(.95); }
 
-    /* ── Spinner ── */
-    .spinner {
-      display: inline-block;
-      width: 18px; height: 18px;
-      border: 2px solid var(--border);
-      border-top-color: var(--accent);
-      border-radius: 50%;
-      animation: spin .7s linear infinite;
-      vertical-align: middle;
-      margin-right: 8px;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
+/* ─── Progress bar ───────────────────────────────────────────────────────── */
+.progress-wrap {
+  max-width: 1100px; margin: 24px auto 0; padding: 0 24px;
+}
+.progress-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px; font-size: 14px; color: var(--muted);
+}
+/* C — shimmer progress bar */
+.progress-bar-bg {
+  height: 5px; background: var(--border); border-radius: 4px; overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%; border-radius: 4px;
+  background: linear-gradient(90deg,
+    var(--accent) 0%, #34aadc 40%, var(--accent-h) 70%, var(--accent) 100%);
+  background-size: 200% 100%;
+  width: 0%;
+  transition: width .35s ease;
+  animation: shimmerBar 1.8s linear infinite;
+}
+@keyframes shimmerBar {
+  from { background-position: 200% 0; }
+  to   { background-position: -200% 0; }
+}
 
-    /* ── Summary bar ── */
-    #summary {
-      max-width: 1100px;
-      margin: 28px auto 0;
-      padding: 0 24px;
-      display: none;
-    }
-    .summary-bar {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 16px 20px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 20px;
-      align-items: center;
-    }
-    .summary-stat { font-size: 14px; color: var(--muted); }
-    .summary-stat strong { color: var(--text); font-size: 16px; }
-    .summary-product {
-      font-size: 18px;
-      font-weight: 700;
-      flex: 1;
-      min-width: 200px;
-    }
+/* ─── Status / error ─────────────────────────────────────────────────────── */
+#status {
+  max-width: 1100px; margin: 20px auto 0; padding: 0 24px;
+  text-align: center; color: var(--muted); font-size: 15px; min-height: 24px;
+}
+.error-msg {
+  color: var(--red); background: var(--red-bg);
+  border: 1px solid rgba(217,48,37,.25);
+  border-radius: var(--radius); padding: 14px 20px;
+  display: inline-block; max-width: 560px;
+}
 
-    /* ── Controls ── */
-    #controls {
-      max-width: 1100px;
-      margin: 16px auto 0;
-      padding: 0 24px;
-      display: none;
-      gap: 12px;
-      flex-wrap: wrap;
-      align-items: center;
-    }
-    .filter-input {
-      flex: 1;
-      min-width: 180px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 8px 12px;
-      font-size: 14px;
-      outline: none;
-      background: var(--surface);
-    }
-    .filter-input:focus { border-color: var(--accent); }
-    .sort-select {
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 8px 12px;
-      font-size: 14px;
-      background: var(--surface);
-      cursor: pointer;
-      outline: none;
-    }
-    .toggle-unavail {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 14px;
-      cursor: pointer;
-      color: var(--muted);
-      user-select: none;
-    }
-    .toggle-unavail input { cursor: pointer; }
+/* ─── Spinner ────────────────────────────────────────────────────────────── */
+.spinner {
+  display: inline-block; width: 18px; height: 18px;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin .7s linear infinite;
+  vertical-align: middle; margin-right: 8px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 
-    /* ── Results table ── */
-    #results {
-      max-width: 1100px;
-      margin: 16px auto 48px;
-      padding: 0 24px;
-    }
-    .table-wrap {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      overflow: hidden;
-      box-shadow: var(--shadow);
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 14px;
-    }
-    thead th {
-      background: #f5f5f7;
-      padding: 12px 16px;
-      text-align: left;
-      font-weight: 600;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: .5px;
-      color: var(--muted);
-      border-bottom: 1px solid var(--border);
-      white-space: nowrap;
-      cursor: pointer;
-      user-select: none;
-    }
-    thead th:hover { color: var(--accent); }
-    thead th .sort-icon { margin-left: 4px; opacity: .4; }
-    thead th.active .sort-icon { opacity: 1; color: var(--accent); }
+/* ─── Summary bar ────────────────────────────────────────────────────────── */
+#summary {
+  max-width: 1100px; margin: 28px auto 0; padding: 0 24px;
+  display: none;
+  opacity: 0; transform: translateY(8px);
+  transition: opacity .3s ease, transform .3s ease;
+}
+#summary.visible { opacity: 1; transform: translateY(0); }
+.summary-bar {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px 20px;
+  display: flex; flex-wrap: wrap; gap: 20px; align-items: center;
+  box-shadow: var(--shadow);
+}
+.summary-product { font-size: 18px; font-weight: 700; flex: 1; min-width: 200px; }
+.summary-stat { font-size: 14px; color: var(--muted); }
+.summary-stat strong { color: var(--text); font-size: 15px; }
+.cache-badge {
+  font-size: 12px; color: var(--accent);
+  background: rgba(0,113,227,.1); border-radius: 6px;
+  padding: 3px 8px; display: none; align-items: center; gap: 4px;
+}
+.cache-badge.visible { display: flex; }
 
-    tbody tr {
-      border-bottom: 1px solid #f0f0f0;
-      transition: background .1s;
-    }
-    tbody tr:last-child { border-bottom: none; }
-    tbody tr:hover { background: #f9f9fb; }
-    tbody tr.unavailable { opacity: .45; }
+/* stat flip animation */
+.stat-val { display: inline-block; }
+.stat-val.flip { animation: numFlip .3s cubic-bezier(.22,.68,0,1.2); }
+@keyframes numFlip {
+  from { opacity: .2; transform: translateY(-5px); }
+  to   { opacity: 1;  transform: translateY(0); }
+}
 
-    td { padding: 13px 16px; vertical-align: middle; }
+/* ─── Controls ───────────────────────────────────────────────────────────── */
+#controls {
+  max-width: 1100px; margin: 16px auto 0; padding: 0 24px;
+  display: none; gap: 12px; flex-wrap: wrap; align-items: center;
+}
+.filter-input {
+  flex: 1; min-width: 180px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 12px; font-size: 14px; outline: none;
+  background: var(--surface); color: var(--text);
+  transition: border-color .15s;
+}
+.filter-input:focus { border-color: var(--accent); }
+.sort-select {
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 12px; font-size: 14px;
+  background: var(--surface); color: var(--text);
+  cursor: pointer; outline: none;
+}
+.toggle-unavail {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 14px; cursor: pointer; color: var(--muted); user-select: none;
+}
+.toggle-unavail input { cursor: pointer; }
 
-    .rank {
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--muted);
-      width: 36px;
-    }
-    .rank-1  { color: #c9a227; }
-    .rank-2  { color: #9e9e9e; }
-    .rank-3  { color: #a0522d; }
+/* ─── Results table ──────────────────────────────────────────────────────── */
+#results { max-width: 1100px; margin: 16px auto 48px; padding: 0 24px; }
+.table-wrap {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  overflow: auto;
+  max-height: 72vh;
+}
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
 
-    .country-cell {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-weight: 500;
-    }
-    .flag { font-size: 20px; line-height: 1; }
+/* H — sticky header: sticks inside the scrollable .table-wrap */
+thead th {
+  position: sticky; top: 0; z-index: 10;
+  background: var(--surface2); padding: 12px 16px;
+  text-align: left; font-weight: 600; font-size: 12px;
+  text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
+  border-bottom: 2px solid var(--border); white-space: nowrap;
+  cursor: pointer; user-select: none; transition: color .15s;
+}
+thead th:hover { color: var(--accent); }
+thead th .sort-icon { margin-left: 4px; opacity: .4; }
+thead th.active .sort-icon { opacity: 1; color: var(--accent); }
 
-    .price-local { font-weight: 600; font-size: 15px; }
-    .price-usd   { color: var(--muted); font-size: 13px; }
+/* ─── Skeleton rows ──────────────────────────────────────────────────────── */
+.skeleton-row td { padding: 14px 16px; }
+.skeleton-row { animation: skeletonPulse 1.4s ease-in-out infinite; }
+@keyframes skeletonPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .4; }
+}
+.skel {
+  height: 14px; border-radius: 6px;
+  background: var(--border); display: inline-block;
+}
 
-    .badge-cheap {
-      display: inline-block;
-      background: #e6f4ea;
-      color: var(--green);
-      border-radius: 6px;
-      padding: 2px 7px;
-      font-size: 11px;
-      font-weight: 600;
-      margin-left: 6px;
-    }
+/* ─── Table rows ─────────────────────────────────────────────────────────── */
+tbody tr {
+  transition: background .12s, opacity .3s, border-left-color .2s;
+  will-change: transform;
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid transparent;
+}
+tbody tr.row-entering {
+  animation: rowIn .3s cubic-bezier(.22,.68,0,1.2) both;
+}
+@keyframes rowIn {
+  from { opacity: 0; transform: translateY(8px) scale(.99); }
+  to   { opacity: 1; transform: translateY(0)  scale(1); }
+}
+tbody tr:hover {
+  background: var(--surface2);
+  border-left-color: var(--accent); /* D */
+}
+tbody tr.unavailable { opacity: .38; }
+/* E — cheapest row highlighted */
+tbody tr.cheapest-row {
+  background: rgba(26,158,92,.07);
+  border-left-color: var(--green) !important;
+}
+tbody tr.cheapest-row:hover { background: rgba(26,158,92,.12); }
+@media (prefers-color-scheme: dark) {
+  tbody tr.cheapest-row { background: rgba(26,158,92,.12); }
+  tbody tr.cheapest-row:hover { background: rgba(26,158,92,.18); }
+}
 
-    .store-link {
-      color: var(--accent);
-      text-decoration: none;
-      font-size: 13px;
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-    }
-    .store-link:hover { text-decoration: underline; }
+td { padding: 13px 16px; vertical-align: middle; }
 
-    .unavail-badge {
-      font-size: 12px;
-      color: var(--muted);
-      background: #f5f5f7;
-      border-radius: 6px;
-      padding: 2px 8px;
-    }
+/* B — medal rank badges */
+.rank { font-size: 15px; font-weight: 700; color: var(--muted); width: 36px; text-align: center; }
+.rank-1::before { content: "🥇"; font-size: 16px; }
+.rank-2::before { content: "🥈"; font-size: 16px; }
+.rank-3::before { content: "🥉"; font-size: 16px; }
+.rank-1, .rank-2, .rank-3 { font-size: 0; } /* hide number, show emoji only */
 
-    /* ── Footer ── */
-    footer {
-      text-align: center;
-      padding: 24px;
-      font-size: 12px;
-      color: var(--muted);
-      border-top: 1px solid var(--border);
-    }
-    footer a { color: var(--accent); text-decoration: none; }
+.country-cell { display: flex; align-items: center; gap: 10px; font-weight: 500; }
+.flag { font-size: 20px; line-height: 1; }
 
-    /* ── Responsive ── */
-    @media (max-width: 600px) {
-      .search-box { padding: 5px 5px 5px 14px; }
-      .search-box button { padding: 9px 16px; font-size: 14px; }
-      td, th { padding: 10px 10px; }
-      .hide-mobile { display: none; }
-    }
+.price-local { font-weight: 600; font-size: 15px; }
+.price-usd   { color: var(--muted); font-size: 13px; }
+
+/* ─── Price bar ──────────────────────────────────────────────────────────── */
+.price-cell { min-width: 160px; }
+.price-bar-wrap {
+  margin-top: 5px; height: 3px;
+  background: var(--border); border-radius: 3px; overflow: hidden;
+}
+.price-bar-fill {
+  height: 100%; border-radius: 3px;
+  background: var(--accent);
+  transition: width .6s cubic-bezier(.25,.46,.45,.94);
+}
+/* cheapest row gets green bar */
+tbody tr.cheapest-row .price-bar-fill { background: var(--green); }
+
+/* ─── Savings badge ──────────────────────────────────────────────────────── */
+.badge-cheap {
+  display: inline-block; background: var(--green-bg); color: var(--green);
+  border-radius: 6px; padding: 2px 7px; font-size: 11px; font-weight: 600;
+  margin-left: 6px;
+}
+/* G — savings badge color-coded by severity */
+.badge-saving { display: inline-block; font-size: 12px; margin-top: 2px; font-weight: 500; }
+.badge-saving.cheap  { color: var(--green); }
+.badge-saving.mid    { color: #f5a623; }
+.badge-saving.pricey { color: var(--red); }
+
+/* ─── Store link / unavailable ───────────────────────────────────────────── */
+.store-link {
+  color: var(--accent); text-decoration: none; font-size: 13px;
+  display: inline-flex; align-items: center; gap: 3px;
+}
+.store-link:hover { text-decoration: underline; }
+.unavail-badge {
+  font-size: 12px; color: var(--muted);
+  background: var(--surface2); border-radius: 6px; padding: 2px 8px;
+}
+
+/* I — country tooltip */
+.country-cell { position: relative; }
+.country-cell .tip {
+  display: none; position: absolute; left: 0; top: calc(100% + 6px);
+  background: var(--text); color: var(--surface);
+  font-size: 11px; font-weight: 500; white-space: nowrap;
+  padding: 4px 8px; border-radius: 6px; z-index: 50;
+  pointer-events: none;
+  opacity: 0; transform: translateY(-4px);
+  transition: opacity .15s, transform .15s;
+}
+.country-cell:hover .tip { display: block; opacity: 1; transform: translateY(0); }
+
+/* J — last updated timestamp */
+.updated-badge {
+  font-size: 12px; color: var(--muted);
+  margin-left: auto; display: flex; align-items: center; gap: 4px;
+}
+
+/* ─── Footer ─────────────────────────────────────────────────────────────── */
+footer {
+  text-align: center; padding: 24px; font-size: 12px;
+  color: var(--muted); border-top: 1px solid var(--border);
+}
+footer a { color: var(--accent); text-decoration: none; }
+
+/* ─── Responsive ─────────────────────────────────────────────────────────── */
+@media (max-width: 700px) {
+  .search-box { padding: 5px 5px 5px 14px; }
+  .search-box button { padding: 9px 16px; font-size: 14px; }
+  td, th { padding: 10px 10px; }
+  .hide-mobile   { display: none !important; }
+  .hide-mobile-s { display: none !important; }  /* rank col on very small */
+  .price-cell { min-width: 110px; }
+}
+@media (max-width: 420px) {
+  .hide-xs { display: none !important; }
+}
   </style>
 </head>
 <body>
@@ -352,7 +450,7 @@
 <!-- Header -->
 <header>
   <div class="header-inner">
-    <svg width="18" height="22" viewBox="0 0 814 1000" fill="currentColor">
+    <svg width="18" height="22" viewBox="0 0 814 1000" fill="currentColor" aria-hidden="true">
       <path d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76 0-103.7 40.8-165.9 40.8s-105-57.8-155.5-127.4C46 790.7 0 663 0 541.8c0-207.5 135.4-317.3 269-317.3 70.1 0 128.4 46.4 172.5 46.4 42.8 0 109.6-49 192.5-49 30.9 0 111.9 2.6 168.3 80.1zm-234-181.5c31.1-36.9 53.1-88.1 53.1-139.3 0-7.1-.6-14.3-1.9-20.1-50.6 1.9-110.8 33.7-147.1 75.8-28.5 32.4-55.1 83.6-55.1 135.5 0 7.8 1.3 15.6 1.9 18.1 3.2.6 8.4 1.3 13.6 1.3 45.4 0 102.5-30.4 135.5-71.3z"/>
     </svg>
     <h1>Apple Products Global Price Tracker</h1>
@@ -360,57 +458,63 @@
 </header>
 
 <!-- Hero -->
+<div class="hero-wrap">
 <section class="hero">
   <h2>Find the cheapest price for any Apple product worldwide</h2>
-  <p>Searches all Apple country storefronts and ranks them by price in USD.</p>
+  <p>Searches all Apple country storefronts live — results appear as they arrive.</p>
 
   <div class="search-box">
-    <input
-      type="text"
-      id="productInput"
-      placeholder="e.g. MacBook Air, iPhone Air, AirPods Pro…"
-      autocomplete="off"
-      spellcheck="false"
-    />
-    <button id="searchBtn" onclick="search()">Search</button>
+    <input type="text" id="productInput"
+           placeholder="e.g. MacBook Air, iPhone 16, AirPods Pro…"
+           autocomplete="off" spellcheck="false" aria-label="Product name" />
+    <button class="clear-btn" id="clearBtn" type="button" aria-label="Clear search" onclick="clearInput()">✕</button>
+    <button id="searchBtn" type="button" onclick="search()">Search</button>
   </div>
 
-  <div class="suggestions">
-    <span class="chip" onclick="quickSearch('MacBook Air')">MacBook Air</span>
-    <span class="chip" onclick="quickSearch('iPhone Air')">iPhone Air</span>
-    <span class="chip" onclick="quickSearch('iPhone 16 Pro')">iPhone 16 Pro</span>
-    <span class="chip" onclick="quickSearch('AirPods Pro')">AirPods Pro</span>
-    <span class="chip" onclick="quickSearch('iPad Pro')">iPad Pro</span>
-    <span class="chip" onclick="quickSearch('Apple Watch Ultra')">Apple Watch Ultra</span>
-    <span class="chip" onclick="quickSearch('Mac mini')">Mac mini</span>
-    <span class="chip" onclick="quickSearch('AirTag')">AirTag</span>
+  <div class="suggestions" role="list" aria-label="Quick searches">
+    <span class="chip" role="listitem" onclick="quickSearch('MacBook Air')">MacBook Air</span>
+    <span class="chip" role="listitem" onclick="quickSearch('iPhone 17')">iPhone 17</span>
+    <span class="chip" role="listitem" onclick="quickSearch('Mac mini')">Mac mini</span>
   </div>
 </section>
+</div>
 
-<!-- Status -->
-<div id="status"></div>
+<!-- Progress bar -->
+<div class="progress-wrap" id="progressWrap" style="display:none" aria-live="polite">
+  <div class="progress-header">
+    <span id="progressLabel">Searching…</span>
+    <span id="progressCount"></span>
+  </div>
+  <div class="progress-bar-bg">
+    <div class="progress-bar-fill" id="progressFill"></div>
+  </div>
+</div>
 
-<!-- Summary -->
+<!-- Status / error -->
+<div id="status" aria-live="assertive"></div>
+
+<!-- Summary bar — shown immediately on meta, dashes until data arrives -->
 <div id="summary">
   <div class="summary-bar">
     <div class="summary-product" id="summaryProduct"></div>
     <div class="summary-stat">
-      <strong id="summaryFound">—</strong> countries with prices
+      <span class="stat-val" id="summaryFound">—</span> countries with prices
     </div>
     <div class="summary-stat">
-      Cheapest: <strong id="summaryCheapest">—</strong>
+      Cheapest: <strong><span class="stat-val" id="summaryCheapest">—</span></strong>
     </div>
     <div class="summary-stat">
-      Most expensive: <strong id="summaryMostExp">—</strong>
+      Most expensive: <strong><span class="stat-val" id="summaryMostExp">—</span></strong>
     </div>
+    <div class="cache-badge" id="cacheBadge">⚡ cached <span id="cacheExpiry"></span></div>
   </div>
 </div>
 
 <!-- Controls -->
-<div id="controls" style="display:none; display:flex;">
+<div id="controls">
   <input class="filter-input" id="filterInput" type="text"
-         placeholder="🔍  Filter by country…" oninput="renderTable()" />
-  <select class="sort-select" id="sortSelect" onchange="renderTable()">
+         placeholder="🔍  Filter by country…" oninput="renderTable()" aria-label="Filter countries" />
+  <select class="sort-select" id="sortSelect" onchange="renderTable()" aria-label="Sort order">
     <option value="usd-asc">Price: Low → High (USD)</option>
     <option value="usd-desc">Price: High → Low (USD)</option>
     <option value="country-asc">Country A → Z</option>
@@ -418,7 +522,7 @@
   </select>
   <label class="toggle-unavail">
     <input type="checkbox" id="showUnavail" onchange="renderTable()" />
-    Show unavailable countries
+    Show unavailable
   </label>
 </div>
 
@@ -427,93 +531,311 @@
 
 <!-- Footer -->
 <footer>
-  Prices fetched live from <a href="https://www.apple.com" target="_blank">apple.com</a>
+  Prices fetched live from <a href="https://www.apple.com" target="_blank" rel="noopener">apple.com</a>
   official storefronts · Base/entry model · Exchange rates via
-  <a href="https://www.exchangerate-api.com" target="_blank">open.er-api.com</a>
-  · Not affiliated with Apple Inc. ·
-  <a href="https://github.com/YOUR_USERNAME/apple-global-price-tracker" target="_blank">GitHub</a>
+  <a href="https://www.exchangerate-api.com" target="_blank" rel="noopener">open.er-api.com</a>
+  · Not affiliated with Apple Inc.
 </footer>
 
+
 <script>
-  // ── Config ──────────────────────────────────────────────────────────────
-  // Replace with your deployed API URL (Render / Railway / etc.)
-  // For local development use: http://localhost:5000
-  const API_BASE = "https://apple-products-global-price-tracker.onrender.com";
-  // const API_BASE = "http://localhost:5000"; // local
+  // const API_BASE = "https://apple-products-global-price-tracker.onrender.com"; // production
+  const API_BASE = "http://localhost:5000"; // local dev — comment out before pushing
 
   // ── State ────────────────────────────────────────────────────────────────
-  let allResults = [];
-  let productName = "";
+  let allResults     = [];
+  let productName    = "";
+  let totalCountries = 0;
+  let receivedCount  = 0;
+  let activeSource   = null;
+  let cacheExpiresAt = null;   // Date when cached result expires
+  let fetchedAt      = null;   // J — timestamp when last fetch completed
 
-  // ── Search ───────────────────────────────────────────────────────────────
+  // Persistent row elements — survive re-renders, cleared on new search
+  const rowEls = new Map();
+
+  // Debounced render — 220ms while streaming, immediate when done
+  let renderTimer = null;
+  function scheduleRender(immediate) {
+    clearTimeout(renderTimer);
+    renderTimer = setTimeout(renderTable, immediate ? 0 : 220);
+  }
+
+  // ── Clear input ──────────────────────────────────────────────────────────
+  function clearInput() {
+    const input = document.getElementById("productInput");
+    input.value = "";
+    input.focus();
+    document.getElementById("clearBtn").style.display = "none";
+  }
+
+  document.getElementById("productInput").addEventListener("input", function() {
+    document.getElementById("clearBtn").style.display =
+      this.value.length ? "flex" : "none";
+  });
+
+  // ── Quick search ─────────────────────────────────────────────────────────
   function quickSearch(name) {
     document.getElementById("productInput").value = name;
+    document.getElementById("clearBtn").style.display = "flex";
     search();
   }
 
-  async function search() {
+  // ── Main search ───────────────────────────────────────────────────────────
+  function search() {
     const input = document.getElementById("productInput");
     const query = input.value.trim();
     if (!query) { input.focus(); return; }
 
-    const btn    = document.getElementById("searchBtn");
-    const status = document.getElementById("status");
+    if (activeSource) { activeSource.close(); activeSource = null; }
 
+    const btn = document.getElementById("searchBtn");
     btn.disabled = true;
     btn.textContent = "Searching…";
-    status.innerHTML = `<span class="spinner"></span> Fetching prices from ${Object.keys({}).length || "50+"} Apple storefronts…`;
-    document.getElementById("summary").style.display = "none";
-    document.getElementById("controls").style.display = "none";
-    document.getElementById("results").innerHTML = "";
-    allResults = [];
 
-    try {
-      const url = `${API_BASE}/api/prices?product=${encodeURIComponent(query)}`;
-      const res = await fetch(url);
-      const data = await res.json();
+    // Reset state
+    allResults     = [];
+    productName    = query;
+    totalCountries = 0;
+    receivedCount  = 0;
+    cacheExpiresAt = null;
+    rowEls.clear();
 
-      if (!res.ok || data.error) {
-        status.innerHTML = `<div class="error-msg">⚠️ ${data.error || "Something went wrong."}</div>`;
-        return;
-      }
+    document.getElementById("status").innerHTML        = "";
+    document.getElementById("results").innerHTML       = "";
+    document.getElementById("controls").style.display  = "none";
+    document.getElementById("progressWrap").style.display = "block";
+    document.getElementById("progressLabel").textContent  = `Resolving "${query}"…`;
+    document.getElementById("progressCount").textContent  = "";
+    document.getElementById("progressFill").style.width   = "0%";
 
-      allResults  = data.results;
-      productName = data.product;
-      status.innerHTML = "";
-      renderSummary(data);
-      document.getElementById("summary").style.display = "block";
+    // Reset summary — show immediately with dashes (item 6)
+    document.getElementById("summaryProduct").textContent = `🍎 ${query}`;
+    document.getElementById("summaryFound").textContent   = "—";
+    document.getElementById("summaryCheapest").textContent= "—";
+    document.getElementById("summaryMostExp").textContent = "—";
+    const sumEl = document.getElementById("summary");
+    sumEl.style.display = "block";
+    // small tick so display:block is painted before we add .visible
+    requestAnimationFrame(() => sumEl.classList.add("visible"));
+
+    // Hide cache badge
+    document.getElementById("cacheBadge").classList.remove("visible");
+
+    // Show skeleton table (item 3)
+    showSkeleton();
+
+    const url = `${API_BASE}/api/prices/stream?product=${encodeURIComponent(query)}`;
+    const es  = new EventSource(url);
+    activeSource = es;
+
+    es.addEventListener("searching", () => {
+      document.getElementById("progressLabel").textContent =
+        `Resolving "${query}" on apple.com…`;
+    });
+
+    es.addEventListener("meta", e => {
+      const meta = JSON.parse(e.data);
+      totalCountries = meta.total;
+      productName    = meta.product;
+      document.getElementById("progressLabel").textContent =
+        `Fetching prices for "${meta.product}"…`;
       document.getElementById("controls").style.display = "flex";
-      renderTable();
 
-    } catch (err) {
-      status.innerHTML = `<div class="error-msg">⚠️ Could not reach the API. Is it deployed? Check the README.<br><small>${err.message}</small></div>`;
-    } finally {
+      // If cached, store expiry for badge (item 7)
+      if (meta.cached) {
+        cacheExpiresAt = Date.now() + 5 * 60 * 1000; // 5 min TTL
+      }
+    });
+
+    es.addEventListener("result", e => {
+      const row = JSON.parse(e.data);
+      allResults.push(row);
+      receivedCount++;
+
+      const pct = totalCountries
+        ? Math.round(receivedCount / totalCountries * 100) : 0;
+      document.getElementById("progressFill").style.width = pct + "%";
+      document.getElementById("progressCount").textContent =
+        `${receivedCount}${totalCountries ? " / " + totalCountries : ""}`;
+
+      updateSummary();
+      scheduleRender();
+    });
+
+    es.addEventListener("done", e => {
+      const data = JSON.parse(e.data);
+      es.close();
+      activeSource = null;
       btn.disabled = false;
       btn.textContent = "Search";
+      document.getElementById("progressWrap").style.display = "none";
+
+      // Show cache badge if result was served from cache (item 7)
+      if (data.cached && cacheExpiresAt) {
+        const mins = Math.max(1, Math.round((cacheExpiresAt - Date.now()) / 60000));
+        document.getElementById("cacheExpiry").textContent =
+          `· refreshes in ${mins}m`;
+        document.getElementById("cacheBadge").classList.add("visible");
+      }
+
+      scheduleRender(true);
+      fetchedAt = Date.now(); // J
+    });
+
+    es.addEventListener("error", e => {
+      let msg = null;
+      try { if (e.data) msg = JSON.parse(e.data).error; } catch (_) {}
+      if (!msg) {
+        msg = allResults.length === 0
+          ? "Could not reach the API. Make sure it is deployed and running."
+          : "Connection lost before all results arrived.";
+      }
+      document.getElementById("status").innerHTML =
+        `<div class="error-msg">⚠️ ${msg}</div>`;
+      es.close();
+      activeSource = null;
+      btn.disabled = false;
+      btn.textContent = "Search";
+      document.getElementById("progressWrap").style.display = "none";
+      if (allResults.length === 0) {
+        document.getElementById("results").innerHTML       = "";
+        document.getElementById("summary").classList.remove("visible");
+        setTimeout(() => document.getElementById("summary").style.display = "none", 300);
+        document.getElementById("controls").style.display = "none";
+      }
+    });
+  }
+
+  // ── Skeleton (item 3) ─────────────────────────────────────────────────────
+  function showSkeleton() {
+    const container = document.getElementById("results");
+    const skRows = Array.from({length: 6}, (_, i) => `
+      <tr class="skeleton-row" style="animation-delay:${i * 80}ms">
+        <td><span class="skel" style="width:18px"></span></td>
+        <td><span class="skel" style="width:${90 + (i % 3)*30}px"></span></td>
+        <td><span class="skel" style="width:80px"></span><br>
+            <span class="skel" style="width:50px;margin-top:6px;height:10px"></span></td>
+        <td class="hide-mobile"><span class="skel" style="width:32px"></span></td>
+        <td><span class="skel" style="width:70px"></span></td>
+      </tr>`).join("");
+
+    container.innerHTML = `
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th class="hide-xs">#</th>
+            <th>Country</th>
+            <th>Price</th>
+            <th class="hide-mobile">Currency</th>
+            <th>Store</th>
+          </tr></thead>
+          <tbody data-skeleton="1">${skRows}</tbody>
+        </table>
+      </div>`;
+  }
+
+  // ── Summary (items 4 + 6) ─────────────────────────────────────────────────
+  function animateStat(id, newText) {
+    const el = document.getElementById(id);
+    if (!el || el.textContent === newText) return;
+    el.textContent = newText;
+    el.classList.remove("flip");
+    void el.offsetWidth;
+    el.classList.add("flip");
+  }
+
+  function updateSummary() {
+    const available = allResults.filter(r => r.available);
+    if (!available.length) return;
+    const sorted   = [...available].sort((a,b) => (a.usdPrice||0)-(b.usdPrice||0));
+    const cheapest = sorted[0];
+    const mostExp  = sorted[sorted.length - 1];
+
+    animateStat("summaryFound",    String(available.length));
+    animateStat("summaryCheapest",
+      `${cheapest.flag} ${cheapest.country} — ${cheapest.localPriceFormatted}`);
+    animateStat("summaryMostExp",
+      `${mostExp.flag} ${mostExp.country} — ${mostExp.localPriceFormatted}`);
+  }
+</script>
+
+<script>
+  // ── Table render — FLIP animated, with price bar + savings (items 1, 4) ──
+  function rowKey(r) { return r.country; }
+
+  function buildRowEl(r, rank, minUsd, maxUsd) {
+    const tr = document.createElement("tr");
+    tr.dataset.key = rowKey(r);
+    updateRowEl(tr, r, rank, minUsd, maxUsd);
+    tr.classList.add("row-entering");
+    tr.addEventListener("animationend",
+      () => tr.classList.remove("row-entering"), {once: true});
+    return tr;
+  }
+
+  function updateRowEl(tr, r, rank, minUsd, maxUsd) {
+    const isCheapest = r.available && r.usdPrice === minUsd;
+    tr.className = [
+      r.available ? "" : "unavailable",
+      isCheapest  ? "cheapest-row" : "",
+    ].join(" ").trim();
+
+    const rankClass = rank <= 3 ? ` rank-${rank}` : "";
+    const urlObj    = new URL(r.url);
+    const parts     = urlObj.pathname.replace(/\/$/, "").split("/").filter(Boolean);
+    const storeLabel = parts.length >= 2 ? `apple.com/${parts[0]}` : "apple.com";
+
+    // Price bar width (item 1) — 100% = most expensive, min ~8%
+    const barPct = (r.available && maxUsd && maxUsd > 0)
+      ? Math.max(8, Math.round((r.usdPrice / maxUsd) * 100))
+      : 0;
+
+    // G — savings color-coded by severity
+    let savingsHTML = "";
+    if (r.available && !isCheapest && minUsd && r.usdPrice > minUsd) {
+      const saveDollars = (r.usdPrice - minUsd).toFixed(0);
+      const savePct     = Math.round((r.usdPrice - minUsd) / r.usdPrice * 100);
+      const cls = savePct <= 10 ? "cheap" : savePct <= 25 ? "mid" : "pricey";
+      savingsHTML = `<div class="badge-saving ${cls}">+$${saveDollars} (${savePct}% more)</div>`;
     }
+
+    const rankHTML  = r.available
+      ? `<td class="rank hide-xs${rankClass}">${rank}</td>`
+      : `<td class="rank hide-xs">—</td>`;
+
+    const priceHTML = r.available
+      ? `<td class="price-cell">
+           <div class="price-local">${r.localPriceFormatted}${isCheapest
+             ? '<span class="badge-cheap">Cheapest</span>' : ''}</div>
+           <div class="price-usd">≈ $${(r.usdPrice||0).toLocaleString("en-US",
+             {minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+           ${savingsHTML}
+           <div class="price-bar-wrap">
+             <div class="price-bar-fill" style="width:${barPct}%"></div>
+           </div>
+         </td>`
+      : `<td class="price-cell"><span class="unavail-badge">${r.reason}</span></td>`;
+
+    const linkOpacity = r.available ? "" : "style='opacity:.5'";
+    const linkHTML    = `<td><a class="store-link" href="${r.url}"
+      target="_blank" rel="noopener" ${linkOpacity}>${storeLabel} ↗</a></td>`;
+
+    tr.innerHTML = `
+      ${rankHTML}
+      <td><div class="country-cell">
+        <span class="flag">${r.flag}</span>${r.country}
+        <span class="tip">${r.country} · ${r.available ? r.currency : 'N/A'}</span>
+      </div></td>
+      ${priceHTML}
+      <td class="hide-mobile">${r.available ? r.currency : "—"}</td>
+      ${linkHTML}`;
   }
 
-  // ── Summary ──────────────────────────────────────────────────────────────
-  function renderSummary(data) {
-    const available = data.results.filter(r => r.available);
-    const cheapest  = available[0];
-    const mostExp   = available[available.length - 1];
-
-    document.getElementById("summaryProduct").textContent =
-      `🍎 ${data.product}`;
-    document.getElementById("summaryFound").textContent =
-      available.length;
-    document.getElementById("summaryCheapest").textContent =
-      cheapest ? `${cheapest.flag} ${cheapest.country} — ${cheapest.localPriceFormatted}` : "—";
-    document.getElementById("summaryMostExp").textContent =
-      mostExp  ? `${mostExp.flag} ${mostExp.country} — ${mostExp.localPriceFormatted}` : "—";
-  }
-
-  // ── Table ────────────────────────────────────────────────────────────────
   function renderTable() {
-    const filter      = document.getElementById("filterInput").value.toLowerCase();
-    const sort        = document.getElementById("sortSelect").value;
-    const showUnavail = document.getElementById("showUnavail").checked;
+    const filter      = document.getElementById("filterInput")?.value.toLowerCase() ?? "";
+    const sort        = document.getElementById("sortSelect")?.value ?? "usd-asc";
+    const showUnavail = document.getElementById("showUnavail")?.checked ?? false;
 
     let rows = allResults.filter(r => {
       if (!showUnavail && !r.available) return false;
@@ -521,14 +843,13 @@
       return true;
     });
 
-    // Sort available rows; unavailable always go to bottom
-    const available   = rows.filter(r => r.available);
+    const available   = rows.filter(r =>  r.available);
     const unavailable = rows.filter(r => !r.available);
 
     available.sort((a, b) => {
       switch (sort) {
-        case "usd-asc":      return (a.usdPrice || 0) - (b.usdPrice || 0);
-        case "usd-desc":     return (b.usdPrice || 0) - (a.usdPrice || 0);
+        case "usd-asc":      return (a.usdPrice||0) - (b.usdPrice||0);
+        case "usd-desc":     return (b.usdPrice||0) - (a.usdPrice||0);
         case "country-asc":  return a.country.localeCompare(b.country);
         case "country-desc": return b.country.localeCompare(a.country);
         default:             return 0;
@@ -536,75 +857,104 @@
     });
 
     rows = [...available, ...unavailable];
-
-    // Cheapest USD for badge
     const minUsd = available.length ? available[0].usdPrice : null;
-
+    const maxUsd = available.length ? available[available.length-1].usdPrice : null;
     const container = document.getElementById("results");
+
     if (!rows.length) {
-      container.innerHTML = `<p style="text-align:center;color:var(--muted);padding:40px">No results match your filter.</p>`;
+      if (allResults.length === 0) return;
+      container.innerHTML =
+        `<p style="text-align:center;color:var(--muted);padding:40px">
+           No results match your filter.</p>`;
       return;
     }
 
-    let rank = 0;
-    const trs = rows.map(r => {
-      if (r.available) rank++;
-      const rankCell = r.available
-        ? `<td class="rank ${rank<=3?'rank-'+rank:''}">${rank}</td>`
-        : `<td class="rank">—</td>`;
-
-      const isCheapest = r.available && r.usdPrice === minUsd;
-      const priceCell  = r.available
-        ? `<td>
-             <div class="price-local">${r.localPriceFormatted}${isCheapest ? '<span class="badge-cheap">Cheapest</span>' : ''}</div>
-             <div class="price-usd">≈ $${r.usdPrice?.toLocaleString("en-US", {minimumFractionDigits:2, maximumFractionDigits:2})}</div>
-           </td>`
-        : `<td><span class="unavail-badge">${r.reason}</span></td>`;
-
-      // Build a readable label: "apple.com/jp" or "apple.com" for US
-      const urlObj   = new URL(r.url);
-      const pathParts = urlObj.pathname.replace(/\/$/, "").split("/").filter(Boolean);
-      // pathParts[0] is the country prefix (e.g. "jp"), pathParts[1] is the slug
-      const storeLabel = pathParts.length >= 2
-        ? `apple.com/${pathParts[0]}`   // e.g. apple.com/jp
-        : `apple.com`;                  // US store has no prefix
-
-      const linkCell = r.available
-        ? `<td><a class="store-link" href="${r.url}" target="_blank" rel="noopener">
-             ${storeLabel} ↗
-           </a></td>`
-        : `<td><a class="store-link" href="${r.url}" target="_blank" rel="noopener" style="opacity:.5">
-             ${storeLabel} ↗
-           </a></td>`;
-
-      return `<tr class="${r.available ? '' : 'unavailable'}">
-        ${rankCell}
-        <td><div class="country-cell"><span class="flag">${r.flag}</span>${r.country}</div></td>
-        ${priceCell}
-        <td class="hide-mobile">${r.available ? r.currency : '—'}</td>
-        ${linkCell}
-      </tr>`;
-    }).join("");
-
-    container.innerHTML = `
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th onclick="cycleSortRank()" title="Sort by rank">#</th>
-              <th onclick="setSort('country-asc','country-desc')">Country <span class="sort-icon">↕</span></th>
-              <th onclick="setSort('usd-asc','usd-desc')">Price <span class="sort-icon active">↕</span></th>
+    // Build scaffold once — wipe skeleton if present, keep real scaffold
+    let tableWrap = container.querySelector(".table-wrap");
+    if (!tableWrap || tableWrap.querySelector("tbody[data-skeleton]")) {
+      container.innerHTML = `
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th class="hide-xs" onclick="cycleSortRank()" title="Sort by price">#</th>
+              <th onclick="setSort('country-asc','country-desc')">
+                Country <span class="sort-icon">↕</span></th>
+              <th onclick="setSort('usd-asc','usd-desc')">
+                Price <span class="sort-icon active">↕</span></th>
               <th class="hide-mobile">Currency</th>
               <th>Store</th>
-            </tr>
-          </thead>
-          <tbody>${trs}</tbody>
-        </table>
-      </div>
-      <p style="margin-top:12px;font-size:12px;color:var(--muted);text-align:right">
-        ${available.length} prices found · ${unavailable.length} countries skipped ·
-        Prices from apple.com official storefronts · Base/entry model
-      </p>`;
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="results-footer"
+           style="margin-top:12px;font-size:12px;color:var(--muted);text-align:right"></p>`;
+      tableWrap = container.querySelector(".table-wrap");
+    }
+    const tbody = tableWrap.querySelector("tbody");
+
+    // FLIP: snapshot pre-positions
+    const prePos = new Map();
+    tbody.querySelectorAll("tr[data-key]").forEach(tr =>
+      prePos.set(tr.dataset.key, tr.getBoundingClientRect().top));
+
+    // Create/update row elements
+    let rank = 0;
+    rows.forEach(r => {
+      if (r.available) rank++;
+      const key  = rowKey(r);
+      const rk   = r.available ? rank : 0;
+      let   tr   = rowEls.get(key);
+      if (!tr) {
+        tr = buildRowEl(r, rk, minUsd, maxUsd);
+        rowEls.set(key, tr);
+      } else {
+        updateRowEl(tr, r, rk, minUsd, maxUsd);
+      }
+    });
+
+    // Append in sorted order (moves nodes, no clone)
+    rows.forEach(r => tbody.appendChild(rowEls.get(rowKey(r))));
+
+    // Remove filtered-out rows
+    Array.from(tbody.querySelectorAll("tr[data-key]")).forEach(tr => {
+      if (!rows.find(r => rowKey(r) === tr.dataset.key)) {
+        tr.style.opacity   = "0";
+        tr.style.transform = "translateY(-6px)";
+        setTimeout(() => tr.remove(), 280);
+      }
+    });
+
+    // FLIP: animate position deltas
+    tbody.querySelectorAll("tr[data-key]").forEach(tr => {
+      const pre  = prePos.get(tr.dataset.key);
+      if (pre === undefined) return; // new row — row-entering handles it
+      const dy = pre - tr.getBoundingClientRect().top;
+      if (Math.abs(dy) < 1) return;
+      tr.style.transition = "none";
+      tr.style.transform  = `translateY(${dy}px)`;
+      requestAnimationFrame(() => {
+        tr.style.transition = "transform .45s cubic-bezier(.25,.46,.45,.94)";
+        tr.style.transform  = "translateY(0)";
+        tr.addEventListener("transitionend", () => {
+          tr.style.transition = "";
+          tr.style.transform  = "";
+        }, {once: true});
+      });
+    });
+
+    // Footer note with J — last updated timestamp
+    const footer = container.querySelector(".results-footer");
+    if (footer) {
+      if (activeSource !== null) {
+        footer.innerHTML = `<span class="spinner"></span> Loading more countries…`;
+      } else {
+        const ago = fetchedAt
+          ? `<span class="updated-badge">· Updated just now</span>` : "";
+        footer.innerHTML =
+          `${available.length} prices found · ${unavailable.length} countries skipped · Base/entry model ${ago}`;
+      }
+    }
   }
 
   function setSort(asc, desc) {
@@ -612,12 +962,8 @@
     sel.value = sel.value === asc ? desc : asc;
     renderTable();
   }
+  function cycleSortRank() { setSort("usd-asc", "usd-desc"); }
 
-  function cycleSortRank() {
-    setSort("usd-asc", "usd-desc");
-  }
-
-  // ── Enter key ────────────────────────────────────────────────────────────
   document.getElementById("productInput").addEventListener("keydown", e => {
     if (e.key === "Enter") search();
   });
