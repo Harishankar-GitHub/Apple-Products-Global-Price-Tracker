@@ -112,7 +112,7 @@ Server-Sent Events stream. Pushes each country result as it completes — the br
 | Event | When | Payload |
 |-------|------|---------|
 | `searching` | Immediately on request | `{ product }` |
-| `meta` | After slug is resolved | `{ product, slug, category, total, rates, cached? }` — `rates` maps each listed currency to units per 1 USD |
+| `meta` | After slug is resolved | `{ product, slug, category, total, rates, cached?, ageSeconds?, expiresInSeconds? }` — `rates` maps each listed currency to units per 1 USD; on a cache hit `ageSeconds` is how long ago the prices were fetched from Apple and `expiresInSeconds` is when they will be fetched again |
 | `result` | As each country finishes | Full country price object (see below) |
 | `done` | All countries complete | `{ product, cached? }` |
 | `error` | Bad product name / API error | `{ error: "message" }` |
@@ -136,6 +136,9 @@ Blocking JSON endpoint. Waits for all countries to finish, then returns the full
   "category": "mac",
   "ratesDate": "live",
   "rates": { "EUR": 0.92, "GBP": 0.78, "INR": 84.1 },
+  "cached": false,
+  "ageSeconds": 0,
+  "expiresInSeconds": 21600,
   "results": [
     {
       "country": "United States",
@@ -187,8 +190,10 @@ Returns current state of all three in-memory caches — useful for debugging on 
   },
   "results_cache": {
     "entries": 1,
+    "ttl_seconds": 21600,
+    "ttl_seconds_incomplete": 300,
     "slugs": {
-      "macbook-air": { "age_seconds": 87, "expires_in": 213 }
+      "macbook-air": { "age_seconds": 87, "ttl_seconds": 21600, "expires_in": 21513 }
     }
   }
 }
@@ -204,9 +209,16 @@ Three in-memory caches reduce latency and external HTTP calls:
 |-------|-----|-----|----------------|
 | Exchange rates | global | 30 min | USD conversion rates from open.er-api.com |
 | Slug resolution | product name | process lifetime | Resolved apple.com slug per product name |
-| Price results | slug | 5 min | Full 50-country result set |
+| Price results | slug | 6 hours (5 min if incomplete) | Full 50-country result set |
 
 On a cache hit for price results, the SSE stream replays cached rows as rapid-fire events — the browser still sees the same `searching → meta → result × N → done` flow, just near-instantly.
+
+Price results are kept for 6 hours (`RESULTS_TTL` in `api/app.py`) because Apple changes prices rarely. Two safeguards go with the long lifetime:
+
+- **Incomplete fetches are not kept for long.** If any country failed for a temporary reason (timeout, network error, rate limit, server error), or no country returned a price at all, the result set is kept for only 5 minutes (`RESULTS_TTL_SHORT`) so it is retried soon. A clean "not sold in this country" (404) does not count as a failure.
+- **Currency conversion does not age with the cache.** On a cache hit the USD prices and the `rates` table are recalculated from the current exchange rates (themselves refreshed every 30 min); only the local prices come from the cache.
+
+The page shows how old cached prices are ("⚡ cached · prices from 2 h 5 min ago").
 
 > These are **in-memory** caches. They are cleared when the server restarts (including Render free-tier cold starts). Redis support can be added later for persistence across restarts.
 
