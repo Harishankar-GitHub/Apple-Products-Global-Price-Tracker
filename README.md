@@ -26,6 +26,23 @@ Backend API (Render): https://apple-products-global-price-tracker.onrender.com
 
 ---
 
+## Features
+
+- **Home country and currency** — pick your home country and every price is also shown in your currency, with "€X cheaper / more than home" on each row. The home country is guessed from the browser language the first time and saved in the browser.
+- **Tax awareness** — each row says how tax relates to the listed price ("incl. 23% VAT", "no sales tax", "+ est. 7.5% sales tax"). Three ranking modes:
+  - *Including tax (estimated)* — default. Adds an estimated sales tax to the US and Canada, the two stores that list prices before tax. Both rates are editable (defaults: US 7.5% population-weighted average, Canada 13% Ontario HST).
+  - *As listed* — the prices exactly as Apple shows them.
+  - *Before tax (approx.)* — removes VAT/GST where a single rate is known.
+- **Shareable links** — the search lives in the URL (`?q=MacBook+Air`), works with back/forward, and there is a *Copy link* button.
+- **Recent searches and autocomplete** — the last 6 successful searches are kept in the browser; product names are suggested as you type.
+- **Region filters and pinned countries** — filter by Americas / Europe / Asia Pacific / Middle East & Africa; star a country to keep it at the top.
+- **Chart view** — a bar chart of each country's difference from your home price.
+- **CSV export** — downloads the rows currently shown.
+
+Tax rates, regions and the autocomplete product list are static tables at the top of the script in `docs/index.html` (`COUNTRY_INFO`, `DEFAULT_TAX`, `PRODUCTS`) — update them there when rates or Apple's line-up change. Preferences are stored in `localStorage` under `apgt:prefs:v1`.
+
+---
+
 ## Project Structure
 
 ```
@@ -99,7 +116,7 @@ Server-Sent Events stream. Pushes each country result as it completes — the br
 | Event | When | Payload |
 |-------|------|---------|
 | `searching` | Immediately on request | `{ product }` |
-| `meta` | After slug is resolved | `{ product, slug, category, total, cached? }` |
+| `meta` | After slug is resolved | `{ product, slug, category, total, rates, cached? }` — `rates` maps each listed currency to units per 1 USD |
 | `result` | As each country finishes | Full country price object (see below) |
 | `done` | All countries complete | `{ product, cached? }` |
 | `error` | Bad product name / API error | `{ error: "message" }` |
@@ -122,6 +139,7 @@ Blocking JSON endpoint. Waits for all countries to finish, then returns the full
   "slug": "macbook-air",
   "category": "mac",
   "ratesDate": "live",
+  "rates": { "EUR": 0.92, "GBP": 0.78, "INR": 84.1 },
   "results": [
     {
       "country": "United States",

@@ -168,6 +168,13 @@ def fetch_exchange_rates() -> dict[str, float]:
     return asyncio.run(_async_fetch_rates())
 
 
+def rates_for_client(rates: dict[str, float]) -> dict[str, float]:
+    """Subset of exchange rates (units per 1 USD) for the currencies we list.
+    Sent to the browser so it can show prices in the visitor's own currency."""
+    wanted = {currency for (_prefix, currency, _symbol) in COUNTRIES.values()}
+    return {c: rates[c] for c in sorted(wanted) if rates.get(c)}
+
+
 # ---------------------------------------------------------------------------
 # Slug discovery (async probing)
 # ---------------------------------------------------------------------------
@@ -474,7 +481,8 @@ def get_prices():
                          key=lambda r: r["country"])
 
     payload = {"product": product, "slug": slug, "category": category,
-               "ratesDate": "live", "results": available + unavailable}
+               "ratesDate": "live", "rates": rates_for_client(rates),
+               "results": available + unavailable}
     _results_cache[slug] = {"ts": time.monotonic(), "payload": payload}
     return jsonify(payload)
 
@@ -505,15 +513,16 @@ def get_prices_stream():
         cached = _results_cache.get(slug)
         if cached and (time.monotonic() - cached["ts"]) < RESULTS_TTL:
             total = len(cached["payload"]["results"])
-            yield f"event: meta\ndata: {json.dumps({'product': product, 'slug': slug, 'category': category, 'total': total, 'cached': True})}\n\n"
+            cached_rates = cached["payload"].get("rates", {})
+            yield f"event: meta\ndata: {json.dumps({'product': product, 'slug': slug, 'category': category, 'total': total, 'cached': True, 'rates': cached_rates})}\n\n"
             for row in cached["payload"]["results"]:
                 yield f"event: result\ndata: {json.dumps(row)}\n\n"
             yield f"event: done\ndata: {json.dumps({'product': product, 'cached': True})}\n\n"
             return
 
-        yield f"event: meta\ndata: {json.dumps({'product': product, 'slug': slug, 'category': category, 'total': len(COUNTRIES)})}\n\n"
-
         rates    = fetch_exchange_rates()            # Cache 1
+
+        yield f"event: meta\ndata: {json.dumps({'product': product, 'slug': slug, 'category': category, 'total': len(COUNTRIES), 'rates': rates_for_client(rates)})}\n\n"
 
         # ── Queue bridge ─────────────────────────────────────────────────────
         # A background thread runs the asyncio event loop and puts each row
@@ -545,7 +554,8 @@ def get_prices_stream():
         unavailable = sorted([r for r in all_rows if not r.get("available")],
                              key=lambda r: r["country"])
         payload = {"product": product, "slug": slug, "category": category,
-                   "ratesDate": "live", "results": available + unavailable}
+                   "ratesDate": "live", "rates": rates_for_client(rates),
+                   "results": available + unavailable}
         _results_cache[slug] = {"ts": time.monotonic(), "payload": payload}
 
         yield f"event: done\ndata: {json.dumps({'product': product})}\n\n"
