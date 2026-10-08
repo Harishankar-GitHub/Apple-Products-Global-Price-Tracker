@@ -91,6 +91,10 @@ header {
   position: relative; overflow: hidden;
   padding-bottom: 56px;
 }
+/* Let the product suggestions drop below the hero; still clip the wide gradient sideways */
+@supports (overflow: clip) {
+  .hero-wrap { overflow: visible; overflow-x: clip; }
+}
 .hero-wrap::before {
   content: "";
   position: absolute; inset: -60px -40% 0;
@@ -184,6 +188,35 @@ header {
 .chip:hover { background: var(--surface2); border-color: var(--accent); }
 .chip:active { transform: scale(.95); }
 
+/* ─── Product suggestions ────────────────────────────────────────────────── */
+.suggest-list {
+  position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 60;
+  list-style: none; text-align: left;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow-md);
+  padding: 6px; max-height: 280px; overflow-y: auto;
+}
+.suggest-list[hidden] { display: none; }
+.suggest-item {
+  padding: 9px 12px; border-radius: var(--radius-sm);
+  font-size: 15px; cursor: pointer;
+}
+.suggest-item:hover, .suggest-item.active { background: var(--surface2); }
+.suggest-item.active { box-shadow: inset 3px 0 0 var(--accent); }
+
+/* ─── Recent searches ────────────────────────────────────────────────────── */
+.recent {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  justify-content: center; align-items: center; margin-top: 12px;
+}
+.recent-label { font-size: 12px; color: var(--muted); }
+.chip-recent { color: var(--text); font-family: inherit; }
+.link-btn {
+  background: none; border: none; padding: 4px 6px; cursor: pointer;
+  font-size: 12px; color: var(--muted); text-decoration: underline;
+}
+.link-btn:hover { color: var(--accent); }
+
 /* ─── Progress bar ───────────────────────────────────────────────────────── */
 .progress-wrap {
   max-width: 1100px; margin: 24px auto 0; padding: 0 24px;
@@ -254,6 +287,17 @@ header {
   padding: 3px 8px; display: none; align-items: center; gap: 4px;
 }
 .cache-badge.visible { display: flex; }
+.summary-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+.action-btn {
+  background: var(--surface2); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 7px 12px; font-size: 13px; font-weight: 500; cursor: pointer;
+  white-space: nowrap; transition: border-color .15s;
+}
+.action-btn:hover { border-color: var(--accent); }
+.summary-note {
+  margin: 8px 4px 0; font-size: 12px; line-height: 1.5; color: var(--muted);
+}
 
 /* stat flip animation */
 .stat-val { display: inline-block; }
@@ -266,7 +310,43 @@ header {
 /* ─── Controls ───────────────────────────────────────────────────────────── */
 #controls {
   max-width: 1100px; margin: 16px auto 0; padding: 0 24px;
-  display: none; gap: 12px; flex-wrap: wrap; align-items: center;
+  display: none;
+}
+.control-row {
+  display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+  margin-top: 12px;
+}
+.control-row:first-child { margin-top: 0; }
+.prefs-row {
+  align-items: flex-end;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 16px;
+}
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field-label {
+  font-size: 11px; font-weight: 600; letter-spacing: .4px;
+  text-transform: uppercase; color: var(--muted);
+}
+.sort-select:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+
+/* Segmented buttons — region filter and view toggle */
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.view-toggle { margin-left: auto; }
+.seg-btn {
+  background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 20px;
+  padding: 6px 14px; font-size: 13px; cursor: pointer;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.seg-btn:hover { border-color: var(--accent); }
+.seg-btn[aria-pressed="true"] {
+  background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600;
+}
+.seg-btn:focus-visible, .action-btn:focus-visible, .pin-btn:focus-visible,
+.link-btn:focus-visible, .chip-recent:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
 }
 .filter-input {
   flex: 1; min-width: 180px;
@@ -289,7 +369,15 @@ header {
 .toggle-unavail input { cursor: pointer; }
 
 /* ─── Results table ──────────────────────────────────────────────────────── */
-#results { max-width: 1100px; margin: 16px auto 48px; padding: 0 24px; }
+.views { max-width: 1100px; margin: 16px auto 48px; padding: 0 24px; }
+#results, #chartView { min-width: 0; }
+/* Table and chart next to each other (wide screens only — see effectiveView()) */
+.views.split {
+  display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 16px; align-items: start;
+}
+.views.split .hide-split { display: none; }
+.views.split .price-cell { min-width: 0; }
 .table-wrap {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); box-shadow: var(--shadow);
@@ -366,7 +454,7 @@ td { padding: 13px 16px; vertical-align: middle; }
 .flag { font-size: 20px; line-height: 1; }
 
 .price-local { font-weight: 600; font-size: 15px; }
-.price-usd   { color: var(--muted); font-size: 13px; }
+.price-usd   { color: var(--muted); font-size: 13px; margin-top: 1px; }
 
 /* ─── Price bar ──────────────────────────────────────────────────────────── */
 .price-cell { min-width: 160px; }
@@ -393,6 +481,71 @@ tbody tr.cheapest-row .price-bar-fill { background: var(--green); }
 .badge-saving.cheap  { color: var(--green); }
 .badge-saving.mid    { color: #f5a623; }
 .badge-saving.pricey { color: var(--red); }
+
+/* ─── Home and pins ─────────────────────────────────────────────────────────── */
+tbody tr.home-row { border-left-color: var(--accent); }
+tbody tr.pinned-row { background: var(--surface2); }
+tbody tr.cheapest-row.pinned-row { background: rgba(26,158,92,.10); }
+.badge-home {
+  background: rgba(0,113,227,.12); color: var(--accent);
+  border-radius: 6px; padding: 2px 7px; font-size: 11px; font-weight: 600;
+}
+.pin-btn {
+  background: none; border: none; cursor: pointer; padding: 2px 4px;
+  font-size: 17px; line-height: 1; color: var(--muted);
+  border-radius: 6px; flex-shrink: 0;
+}
+.pin-btn:hover { color: var(--gold); }
+.pin-btn.on { color: var(--gold); }
+.pin-spacer { width: 25px; flex-shrink: 0; }
+.store-link.dim { opacity: .5; }
+.empty-note { text-align: center; color: var(--muted); padding: 40px; }
+.results-footer { margin-top: 12px; font-size: 12px; color: var(--muted); text-align: right; }
+
+/* ─── Chart view ─────────────────────────────────────────────────────────── */
+.chart-card {
+  --bar: #1f6fd0; --same: #8e8e93;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px 20px;
+}
+.chart-head {
+  display: flex; flex-wrap: wrap; gap: 8px 20px;
+  align-items: baseline; justify-content: space-between; margin-bottom: 12px;
+}
+.chart-title { font-size: 15px; font-weight: 600; }
+.chart-row {
+  display: grid; grid-template-columns: 180px minmax(0, 1fr) 210px;
+  gap: 12px; align-items: center; padding: 5px 8px; border-radius: 8px;
+}
+.chart-row:hover { background: var(--surface2); }
+.chart-row.is-home { background: rgba(0,113,227,.07); }
+.chart-label { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 14px; font-weight: 500; }
+.chart-label .badge-home { flex-shrink: 0; }
+.chart-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chart-track { position: relative; height: 16px; }
+.chart-axis {
+  position: absolute; top: -5px; bottom: -5px; width: 1px;
+  background: var(--border);
+}
+.chart-bar { position: absolute; top: 2px; height: 12px; min-width: 2px; }
+.chart-bar.more { background: var(--bar); border-radius: 0 4px 4px 0; }
+.chart-bar.same  { background: var(--same); width: 3px !important; border-radius: 2px; }
+.chart-value { font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
+.chart-price { font-weight: 600; }
+.chart-delta { color: var(--muted); margin-left: 6px; }
+.chart-foot { margin-top: 12px; font-size: 12px; color: var(--muted); text-align: right; }
+
+/* Side by side: the chart card matches the table's height and scrolls on its own;
+   rows use the compact layout (name and figures on one line, bar beneath). */
+.views.split .chart-card { display: flex; flex-direction: column; max-height: 72vh; padding: 16px; }
+.views.split .chart-rows { overflow-y: auto; min-height: 0; padding-right: 4px; }
+.views.split .chart-row { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 7px 6px; }
+.views.split .chart-label { grid-column: 1; grid-row: 1; }
+.views.split .chart-value { grid-column: 2; grid-row: 1; font-size: 12px; }
+.views.split .chart-track { grid-column: 1 / -1; grid-row: 2; height: 12px; }
+.views.split .chart-bar { top: 1px; height: 10px; }
+.views.split .chart-axis { top: -2px; bottom: -2px; }
+@media (max-width: 999px) { .seg-both { display: none; } }
 
 /* ─── Store link / unavailable ───────────────────────────────────────────── */
 .store-link {
@@ -439,6 +592,36 @@ footer a { color: var(--accent); text-decoration: none; }
   .hide-mobile   { display: none !important; }
   .hide-mobile-s { display: none !important; }  /* rank col on very small */
   .price-cell { min-width: 110px; }
+  /* Narrow screens: fixed columns so the table never scrolls sideways */
+  table { table-layout: fixed; }
+  .col-rank { width: 44px; }
+  .col-country { width: 40%; }
+  .col-store { width: 60px; }
+  .store-cell { text-align: center; }
+  .store-text { display: none; }
+  .store-link { font-size: 18px; padding: 8px 10px; }
+  .country-cell { gap: 6px; }
+  .pin-btn { padding: 2px 0; }
+  .pin-spacer { width: 17px; }
+  .country-name { overflow-wrap: anywhere; }
+  .price-cell { overflow-wrap: anywhere; }
+  .badge-cheap { margin-left: 0; display: table; margin-top: 2px; }
+  .prefs-row .field { flex: 1 1 140px; }
+  .prefs-row .sort-select { width: 100%; }
+  .view-toggle { margin-left: 0; }
+  .summary-actions { width: 100%; }
+  .summary-actions .action-btn { flex: 1; }
+  .chart-card { padding: 14px 12px; }
+  /* Narrow screens: name and figures on one line, bar full width beneath */
+  .chart-row { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 7px 6px; }
+  .chart-label { grid-column: 1; grid-row: 1; }
+  .chart-value { grid-column: 2; grid-row: 1; font-size: 12px; }
+  .chart-track { grid-column: 1 / -1; grid-row: 2; height: 12px; }
+  .chart-bar { top: 1px; height: 10px; }
+  .chart-axis { top: -2px; bottom: -2px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chart-bar, .seg-btn, .action-btn { transition: none; }
 }
 @media (max-width: 420px) {
   .hide-xs { display: none !important; }
@@ -465,10 +648,13 @@ footer a { color: var(--accent); text-decoration: none; }
 
   <div class="search-box">
     <input type="text" id="productInput"
-           placeholder="e.g. MacBook Air, iPhone 16, AirPods Pro…"
-           autocomplete="off" spellcheck="false" aria-label="Product name" />
+           placeholder="e.g. MacBook Air, iPhone 17, AirPods Pro…"
+           autocomplete="off" spellcheck="false" aria-label="Product name"
+           role="combobox" aria-autocomplete="list" aria-expanded="false"
+           aria-controls="suggestList" />
     <button class="clear-btn" id="clearBtn" type="button" aria-label="Clear search" onclick="clearInput()">✕</button>
     <button id="searchBtn" type="button" onclick="search()">Search</button>
+    <ul class="suggest-list" id="suggestList" role="listbox" aria-label="Product suggestions" hidden></ul>
   </div>
 
   <div class="suggestions" role="list" aria-label="Quick searches">
@@ -476,6 +662,8 @@ footer a { color: var(--accent); text-decoration: none; }
     <span class="chip" role="listitem" onclick="quickSearch('iPhone 17')">iPhone 17</span>
     <span class="chip" role="listitem" onclick="quickSearch('Mac mini')">Mac mini</span>
   </div>
+
+  <div class="recent" id="recentWrap" aria-label="Recent searches" style="display:none"></div>
 </section>
 </div>
 
@@ -506,28 +694,62 @@ footer a { color: var(--accent); text-decoration: none; }
     <div class="summary-stat">
       Most expensive: <strong><span class="stat-val" id="summaryMostExp">—</span></strong>
     </div>
+    <div class="summary-stat">
+      Home: <strong><span class="stat-val" id="summaryHome">—</span></strong>
+    </div>
     <div class="cache-badge" id="cacheBadge">⚡ cached <span id="cacheExpiry"></span></div>
+    <div class="summary-actions">
+      <button type="button" class="action-btn" id="copyLinkBtn" onclick="copyLink()">🔗 Copy link</button>
+      <button type="button" class="action-btn" id="exportCsvBtn" onclick="exportCsv()">⬇ Export CSV</button>
+    </div>
   </div>
+  <p class="summary-note" id="summaryNote" aria-live="polite"></p>
 </div>
 
 <!-- Controls -->
 <div id="controls">
-  <input class="filter-input" id="filterInput" type="text"
-         placeholder="🔍  Filter by country…" oninput="renderTable()" aria-label="Filter countries" />
-  <select class="sort-select" id="sortSelect" onchange="renderTable()" aria-label="Sort order">
-    <option value="usd-asc">Price: Low → High (USD)</option>
-    <option value="usd-desc">Price: High → Low (USD)</option>
-    <option value="country-asc">Country A → Z</option>
-    <option value="country-desc">Country Z → A</option>
-  </select>
-  <label class="toggle-unavail">
-    <input type="checkbox" id="showUnavail" onchange="renderTable()" />
-    Show unavailable
-  </label>
+  <!-- Row 1 — how prices are compared (saved in this browser) -->
+  <div class="control-row prefs-row">
+    <label class="field">
+      <span class="field-label">Home country</span>
+      <select class="sort-select" id="homeSelect"></select>
+    </label>
+    <label class="field">
+      <span class="field-label">Show prices in</span>
+      <select class="sort-select" id="currencySelect"></select>
+    </label>
+  </div>
+
+  <!-- Row 2 — what is shown -->
+  <div class="control-row">
+    <div class="seg" id="regionChips" role="group" aria-label="Region"></div>
+    <div class="seg view-toggle" id="viewToggle" role="group" aria-label="View">
+      <button type="button" class="seg-btn seg-both" data-view="both" aria-pressed="true">Side by side</button>
+      <button type="button" class="seg-btn" data-view="table" aria-pressed="false">Table</button>
+      <button type="button" class="seg-btn" data-view="chart" aria-pressed="false">Chart</button>
+    </div>
+  </div>
+  <div class="control-row">
+    <input class="filter-input" id="filterInput" type="text"
+           placeholder="🔍  Filter by country…" oninput="renderAll()" aria-label="Filter countries" />
+    <select class="sort-select" id="sortSelect" onchange="renderAll()" aria-label="Sort order">
+      <option value="usd-asc">Price: Low → High</option>
+      <option value="usd-desc">Price: High → Low</option>
+      <option value="country-asc">Country A → Z</option>
+      <option value="country-desc">Country Z → A</option>
+    </select>
+    <label class="toggle-unavail">
+      <input type="checkbox" id="showUnavail" onchange="renderAll()" />
+      Show unavailable
+    </label>
+  </div>
 </div>
 
 <!-- Results -->
-<div id="results"></div>
+<div id="views" class="views">
+  <div id="results"></div>
+  <div id="chartView" style="display:none"></div>
+</div>
 
 <!-- Footer -->
 <footer>
@@ -542,6 +764,114 @@ footer a { color: var(--accent); text-decoration: none; }
   const API_BASE = "https://apple-products-global-price-tracker.onrender.com"; // production
   // const API_BASE = "http://localhost:5000"; // local dev — comment out before pushing
 
+  // ── Reference data ───────────────────────────────────────────────────────
+  // Country names must match the API's COUNTRIES table exactly.
+  const AM = "Americas", EU = "Europe", AP = "Asia Pacific", ME = "Middle East & Africa";
+  const COUNTRY_INFO = {
+    "United States":        { cc: "US", region: AM, cur: "USD" },
+    "Canada":               { cc: "CA", region: AM, cur: "CAD" },
+    "Mexico":               { cc: "MX", region: AM, cur: "MXN" },
+    "Brazil":               { cc: "BR", region: AM, cur: "BRL" },
+    "Chile":                { cc: "CL", region: AM, cur: "CLP" },
+    "Colombia":             { cc: "CO", region: AM, cur: "COP" },
+
+    "United Kingdom":       { cc: "GB", region: EU, cur: "GBP" },
+    "Germany":              { cc: "DE", region: EU, cur: "EUR" },
+    "France":               { cc: "FR", region: EU, cur: "EUR" },
+    "Netherlands":          { cc: "NL", region: EU, cur: "EUR" },
+    "Spain":                { cc: "ES", region: EU, cur: "EUR" },
+    "Italy":                { cc: "IT", region: EU, cur: "EUR" },
+    "Austria":              { cc: "AT", region: EU, cur: "EUR" },
+    "Ireland":              { cc: "IE", region: EU, cur: "EUR" },
+    "Portugal":             { cc: "PT", region: EU, cur: "EUR" },
+    "Sweden":               { cc: "SE", region: EU, cur: "SEK" },
+    "Norway":               { cc: "NO", region: EU, cur: "NOK" },
+    "Denmark":              { cc: "DK", region: EU, cur: "DKK" },
+    "Poland":               { cc: "PL", region: EU, cur: "PLN" },
+    "Turkey":               { cc: "TR", region: EU, cur: "TRY" },
+    "Czech Republic":       { cc: "CZ", region: EU, cur: "CZK" },
+    "Hungary":              { cc: "HU", region: EU, cur: "HUF" },
+    "Romania":              { cc: "RO", region: EU, cur: "RON" },
+    "Finland":              { cc: "FI", region: EU, cur: "EUR" },
+    "Belgium":              { cc: "BE", region: EU, cur: "EUR" },
+    "Luxembourg":           { cc: "LU", region: EU, cur: "EUR" },
+    "Greece":               { cc: "GR", region: EU, cur: "EUR" },
+    "Switzerland":          { cc: "CH", region: EU, cur: "CHF" },
+
+    "Japan":                { cc: "JP", region: AP, cur: "JPY" },
+    "South Korea":          { cc: "KR", region: AP, cur: "KRW" },
+    "Hong Kong":            { cc: "HK", region: AP, cur: "HKD" },
+    "Taiwan":               { cc: "TW", region: AP, cur: "TWD" },
+    "China":                { cc: "CN", region: AP, cur: "CNY" },
+    "Philippines":          { cc: "PH", region: AP, cur: "PHP" },
+    "Thailand":             { cc: "TH", region: AP, cur: "THB" },
+    "India":                { cc: "IN", region: AP, cur: "INR" },
+    "Singapore":            { cc: "SG", region: AP, cur: "SGD" },
+    "Malaysia":             { cc: "MY", region: AP, cur: "MYR" },
+    "Australia":            { cc: "AU", region: AP, cur: "AUD" },
+    "New Zealand":          { cc: "NZ", region: AP, cur: "NZD" },
+    "Vietnam":              { cc: "VN", region: AP, cur: "VND" },
+    "Indonesia":            { cc: "ID", region: AP, cur: "IDR" },
+
+    "United Arab Emirates": { cc: "AE", region: ME, cur: "AED" },
+    "Saudi Arabia":         { cc: "SA", region: ME, cur: "SAR" },
+    "Israel":               { cc: "IL", region: ME, cur: "ILS" },
+    "South Africa":         { cc: "ZA", region: ME, cur: "ZAR" },
+    "Kuwait":               { cc: "KW", region: ME, cur: "KWD" },
+    "Qatar":                { cc: "QA", region: ME, cur: "QAR" },
+    "Bahrain":              { cc: "BH", region: ME, cur: "BHD" },
+    "Oman":                 { cc: "OM", region: ME, cur: "OMR" },
+  };
+  const REGIONS = [AM, EU, AP, ME];
+  const COUNTRY_NAMES = Object.keys(COUNTRY_INFO).sort((a, b) => a.localeCompare(b));
+  const CURRENCIES = [...new Set(Object.values(COUNTRY_INFO).map(c => c.cur))].sort();
+
+  // Product names offered as you type (Apple's line-up, October 2026).
+  const PRODUCTS = [
+    "iPhone 18 Pro", "iPhone Air", "iPhone Duo", "iPhone 17", "iPhone 17e", "iPhone 16",
+    "MacBook Air", "MacBook Pro", "MacBook Neo", "iMac", "Mac mini", "Mac Studio", "Studio Display",
+    "iPad", "iPad mini", "iPad Air", "iPad Pro",
+    "Apple Watch Series 12", "Apple Watch Ultra 4", "Apple Watch SE 3",
+    "AirPods 5", "AirPods Pro", "AirPods Max",
+    "Apple TV 4K", "HomePod mini", "Apple Vision Pro", "AirTag",
+  ];
+
+  // ── Saved preferences (per browser) ──────────────────────────────────────
+  const STORE_KEY = "apgt:prefs:v1";
+  const MAX_RECENT = 6;
+
+  function guessHome() {
+    const langs = navigator.languages && navigator.languages.length
+      ? navigator.languages : [navigator.language || ""];
+    for (const l of langs) {
+      const cc = (String(l).split("-")[1] || "").toUpperCase();
+      const hit = COUNTRY_NAMES.find(n => COUNTRY_INFO[n].cc === cc);
+      if (hit) return hit;
+    }
+    return "United States";
+  }
+
+  const VIEWS = ["both", "table", "chart"];
+  function loadPrefs() {
+    const base = { home: guessHome(), currency: null, pinned: [], recent: [], view: "both" };
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
+      if (saved && typeof saved === "object")
+        Object.keys(base).forEach(k => { if (k in saved) base[k] = saved[k]; });
+    } catch (_) { /* storage blocked or corrupt — defaults are fine */ }
+    if (!COUNTRY_INFO[base.home]) base.home = guessHome();
+    if (base.currency && !CURRENCIES.includes(base.currency)) base.currency = null;
+    if (!VIEWS.includes(base.view)) base.view = "both";
+    base.pinned = Array.isArray(base.pinned) ? base.pinned.filter(n => COUNTRY_INFO[n]) : [];
+    base.recent = Array.isArray(base.recent)
+      ? base.recent.filter(s => typeof s === "string" && s.trim()).slice(0, MAX_RECENT) : [];
+    return base;
+  }
+  function savePrefs() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(prefs)); } catch (_) {}
+  }
+  const prefs = loadPrefs();
+
   // ── State ────────────────────────────────────────────────────────────────
   let allResults     = [];
   let productName    = "";
@@ -550,46 +880,280 @@ footer a { color: var(--accent); text-decoration: none; }
   let activeSource   = null;
   let cacheExpiresAt = null;   // Date when cached result expires
   let fetchedAt      = null;   // J — timestamp when last fetch completed
+  let serverRates    = null;   // currency → units per 1 USD, sent by the API
+  let regionFilter   = "all";
+
+  // "Side by side" needs room; on narrower screens it falls back to the table.
+  const wideQuery = window.matchMedia("(min-width: 1000px)");
+  function effectiveView() {
+    return prefs.view === "both" && !wideQuery.matches ? "table" : prefs.view;
+  }
 
   // Persistent row elements — survive re-renders, cleared on new search
   const rowEls = new Map();
+
+  const $ = id => document.getElementById(id);
 
   // Debounced render — 220ms while streaming, immediate when done
   let renderTimer = null;
   function scheduleRender(immediate) {
     clearTimeout(renderTimer);
-    renderTimer = setTimeout(renderTable, immediate ? 0 : 220);
+    renderTimer = setTimeout(renderAll, immediate ? 0 : 220);
+  }
+
+  // ── Small helpers ────────────────────────────────────────────────────────
+  // Everything interpolated into innerHTML goes through esc().
+  function esc(v) {
+    return String(v ?? "").replace(/[&<>"']/g, ch =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+  }
+  function safeUrl(u) {
+    try {
+      const url = new URL(u);
+      return url.protocol === "https:" || url.protocol === "http:" ? url.href : "#";
+    } catch (_) { return "#"; }
+  }
+  function info(country) { return COUNTRY_INFO[country] || null; }
+  function isNum(v) { return typeof v === "number" && Number.isFinite(v); }
+
+  // ── Currency ─────────────────────────────────────────────────────────────
+  function displayCurrency() {
+    return prefs.currency || (info(prefs.home) ? info(prefs.home).cur : "USD");
+  }
+  // Rate for a currency (units per 1 USD). Prefers the API's table; falls back
+  // to the rate implied by any row already received in that currency.
+  function rateFor(cur) {
+    if (cur === "USD") return 1;
+    if (serverRates && isNum(serverRates[cur]) && serverRates[cur] > 0) return serverRates[cur];
+    const row = allResults.find(r => r.available && r.currency === cur &&
+                                     isNum(r.usdPrice) && r.usdPrice > 0 && isNum(r.localPrice));
+    return row ? row.localPrice / row.usdPrice : null;
+  }
+  // The currency we can actually show: the chosen one if we have a rate, else USD.
+  function activeCurrency() {
+    const cur = displayCurrency();
+    return rateFor(cur) ? cur : "USD";
+  }
+  function fmtMoney(amount, cur) {
+    if (!isNum(amount)) return "—";
+    const digits = Math.abs(amount) >= 1000 ? 0 : 2;
+    try {
+      return new Intl.NumberFormat("en", {
+        style: "currency", currency: cur, currencyDisplay: "narrowSymbol",
+        minimumFractionDigits: digits, maximumFractionDigits: digits,
+      }).format(amount);
+    } catch (_) {
+      return `${cur} ${amount.toFixed(digits)}`;
+    }
+  }
+  function fmtPct(p) {
+    const a = Math.abs(p);
+    return (a >= 10 ? Math.round(a) : Math.round(a * 10) / 10) + "%";
+  }
+
+  // ── Derived view of the results ──────────────────────────────────────────
+  // Ranks, cheapest/most expensive and the differences always come from the
+  // full result set, so they do not change with sorting or filtering.
+  // Every difference is measured against the cheapest price.
+  function buildView() {
+    const cur  = activeCurrency();
+    const rate = rateFor(cur) || 1;
+    const items = allResults.map(r => {
+      const usd = r.available && isNum(r.usdPrice) ? r.usdPrice : null;   // price as listed
+      return { r, c: info(r.country), usd, value: usd === null ? null : usd * rate,
+               pinned: prefs.pinned.includes(r.country), isHome: r.country === prefs.home };
+    });
+    const priced = items.filter(i => i.value !== null).sort((a, b) => a.value - b.value);
+    priced.forEach((i, idx) => { i.rank = idx + 1; });
+
+    const cheapest = priced[0] || null;
+    const priciest = priced[priced.length - 1] || null;
+    const home     = priced.find(i => i.isHome) || null;
+
+    items.forEach(i => {
+      i.isCheapest = !!cheapest && i.value !== null && i.value === cheapest.value;
+      if (cheapest && i.value !== null) {
+        i.diff    = i.value - cheapest.value;
+        i.diffPct = cheapest.value ? (i.diff / cheapest.value) * 100 : 0;
+      } else {
+        i.diff = i.diffPct = null;
+      }
+    });
+    return { items, priced, cheapest, priciest, home, cur, wantedCur: displayCurrency() };
+  }
+
+  function visibleItems(view) {
+    const filter      = ($("filterInput")?.value || "").trim().toLowerCase();
+    const sort        = $("sortSelect")?.value ?? "usd-asc";
+    const showUnavail = $("showUnavail")?.checked ?? false;
+
+    const shown = view.items.filter(i => {
+      if (!showUnavail && !i.r.available) return false;
+      if (regionFilter !== "all" && (!i.c || i.c.region !== regionFilter)) return false;
+      if (filter && !i.r.country.toLowerCase().includes(filter)) return false;
+      return true;
+    });
+
+    const byPrice = (a, b) => {
+      if (a.value === null && b.value === null) return a.r.country.localeCompare(b.r.country);
+      if (a.value === null) return 1;
+      if (b.value === null) return -1;
+      return a.value - b.value;
+    };
+    const cmp = {
+      "usd-asc":      byPrice,
+      "usd-desc":     (a, b) => (a.value === null || b.value === null) ? byPrice(a, b) : b.value - a.value,
+      "country-asc":  (a, b) => a.r.country.localeCompare(b.r.country),
+      "country-desc": (a, b) => b.r.country.localeCompare(a.r.country),
+    }[sort] || byPrice;
+
+    const group = i => (i.r.available ? (i.pinned ? 0 : 1) : 2);  // pinned, priced, unavailable
+    return shown.sort((a, b) => group(a) - group(b) || cmp(a, b));
+  }
+
+  // "€120 more than the cheapest (+13%)". The cheapest row carries its badge instead.
+  function diffLabel(i, view) {
+    if (i.diff === null || i.isCheapest) return null;
+    const cls = i.diffPct <= 10 ? "cheap" : i.diffPct <= 25 ? "mid" : "pricey";
+    return { cls, text: `${fmtMoney(i.diff, view.cur)} more than the cheapest (+${fmtPct(i.diffPct)})` };
   }
 
   // ── Clear input ──────────────────────────────────────────────────────────
   function clearInput() {
-    const input = document.getElementById("productInput");
+    const input = $("productInput");
     input.value = "";
     input.focus();
-    document.getElementById("clearBtn").style.display = "none";
+    $("clearBtn").style.display = "none";
+    closeSuggest();
   }
-
-  document.getElementById("productInput").addEventListener("input", function() {
-    document.getElementById("clearBtn").style.display =
-      this.value.length ? "flex" : "none";
-  });
 
   // ── Quick search ─────────────────────────────────────────────────────────
   function quickSearch(name) {
-    document.getElementById("productInput").value = name;
-    document.getElementById("clearBtn").style.display = "flex";
+    $("productInput").value = name;
+    $("clearBtn").style.display = "flex";
     search();
   }
 
+  // ── Shareable links ──────────────────────────────────────────────────────
+  const BASE_TITLE = document.title;
+  function queryFromUrl() {
+    try { return (new URLSearchParams(location.search).get("q") || "").trim().slice(0, 80); }
+    catch (_) { return ""; }
+  }
+  function writeUrl(query, replace) {
+    try {
+      const url = new URL(location.href);
+      if (query) url.searchParams.set("q", query); else url.searchParams.delete("q");
+      if (url.href === location.href) return;
+      history[replace ? "replaceState" : "pushState"]({ q: query }, "", url);
+    } catch (_) { /* e.g. sandboxed preview — the page still works */ }
+  }
+  async function copyLink() {
+    const btn  = $("copyLinkBtn");
+    const link = location.href;
+    let ok = false;
+    try { await navigator.clipboard.writeText(link); ok = true; }
+    catch (_) {
+      try {                                     // older browsers / non-secure contexts
+        const ta = document.createElement("textarea");
+        ta.value = link; ta.setAttribute("readonly", "");
+        ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select();
+        ok = document.execCommand("copy"); ta.remove();
+      } catch (_) {}
+    }
+    btn.textContent = ok ? "✓ Link copied" : "Copy failed";
+    setTimeout(() => { btn.textContent = "🔗 Copy link"; }, 1800);
+  }
+
+  // ── Recent searches ──────────────────────────────────────────────────────
+  function rememberSearch(name) {
+    const clean = String(name || "").trim();
+    if (!clean) return;
+    prefs.recent = [clean, ...prefs.recent.filter(s => s.toLowerCase() !== clean.toLowerCase())]
+      .slice(0, MAX_RECENT);
+    savePrefs();
+    renderRecent();
+  }
+  function clearRecent() {
+    prefs.recent = [];
+    savePrefs();
+    renderRecent();
+  }
+  function renderRecent() {
+    const wrap = $("recentWrap");
+    if (!prefs.recent.length) { wrap.style.display = "none"; wrap.innerHTML = ""; return; }
+    wrap.style.display = "flex";
+    wrap.innerHTML =
+      `<span class="recent-label">Recent</span>` +
+      prefs.recent.map(s =>
+        `<button type="button" class="chip chip-recent" data-recent="${esc(s)}">${esc(s)}</button>`).join("") +
+      `<button type="button" class="link-btn" id="clearRecentBtn">Clear</button>`;
+  }
+
+  // ── Product autocomplete ─────────────────────────────────────────────────
+  let suggestItems = [];
+  let suggestIndex = -1;
+
+  function matchProducts(text) {
+    const words = text.toLowerCase().split(/\s+/).filter(Boolean);
+    if (!words.length) return [];
+    const pool = [...new Set([...prefs.recent, ...PRODUCTS])];
+    const hits = pool.filter(p => words.every(w => p.toLowerCase().includes(w)));
+    const exact = text.trim().toLowerCase();
+    // Nothing to suggest if the only match is what is already typed.
+    if (hits.length === 1 && hits[0].toLowerCase() === exact) return [];
+    const starts = p => (p.toLowerCase().startsWith(words[0]) ? 0 : 1);
+    return hits.sort((a, b) => starts(a) - starts(b)).slice(0, 7);
+  }
+  function openSuggest() {
+    const input = $("productInput");
+    const list  = $("suggestList");
+    suggestItems = matchProducts(input.value);
+    suggestIndex = -1;
+    if (!suggestItems.length) { closeSuggest(); return; }
+    list.innerHTML = suggestItems.map((p, i) =>
+      `<li role="option" id="suggest-${i}" class="suggest-item" data-suggest="${esc(p)}"
+           aria-selected="false">${esc(p)}</li>`).join("");
+    list.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+  }
+  function closeSuggest() {
+    const list = $("suggestList");
+    list.hidden = true;
+    list.innerHTML = "";
+    suggestItems = [];
+    suggestIndex = -1;
+    const input = $("productInput");
+    input.setAttribute("aria-expanded", "false");
+    input.removeAttribute("aria-activedescendant");
+  }
+  function moveSuggest(step) {
+    if (!suggestItems.length) return;
+    suggestIndex = (suggestIndex + step + suggestItems.length) % suggestItems.length;
+    $("suggestList").querySelectorAll(".suggest-item").forEach((li, i) => {
+      const on = i === suggestIndex;
+      li.classList.toggle("active", on);
+      li.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    $("productInput").setAttribute("aria-activedescendant", `suggest-${suggestIndex}`);
+  }
+
   // ── Main search ───────────────────────────────────────────────────────────
-  function search() {
-    const input = document.getElementById("productInput");
+  // opts.fromHistory: the search came from the URL (page load or back/forward),
+  // so the address bar is already right and must not get a new history entry.
+  function search(opts) {
+    const fromHistory = !!(opts && opts.fromHistory);
+    const input = $("productInput");
     const query = input.value.trim();
     if (!query) { input.focus(); return; }
 
+    closeSuggest();
     if (activeSource) { activeSource.close(); activeSource = null; }
+    writeUrl(query, fromHistory);
+    document.title = `${query} — ${BASE_TITLE}`;
 
-    const btn = document.getElementById("searchBtn");
+    const btn = $("searchBtn");
     btn.disabled = true;
     btn.textContent = "Searching…";
 
@@ -599,28 +1163,34 @@ footer a { color: var(--accent); text-decoration: none; }
     totalCountries = 0;
     receivedCount  = 0;
     cacheExpiresAt = null;
+    serverRates    = null;
     rowEls.clear();
 
-    document.getElementById("status").innerHTML        = "";
-    document.getElementById("results").innerHTML       = "";
-    document.getElementById("controls").style.display  = "none";
-    document.getElementById("progressWrap").style.display = "block";
-    document.getElementById("progressLabel").textContent  = `Resolving "${query}"…`;
-    document.getElementById("progressCount").textContent  = "";
-    document.getElementById("progressFill").style.width   = "0%";
+    $("status").innerHTML        = "";
+    $("results").innerHTML       = "";
+    $("chartView").innerHTML     = "";
+    $("chartView").style.display = "none";
+    $("views").classList.remove("split");
+    $("controls").style.display  = "none";
+    $("progressWrap").style.display = "block";
+    $("progressLabel").textContent  = `Resolving "${query}"…`;
+    $("progressCount").textContent  = "";
+    $("progressFill").style.width   = "0%";
 
     // Reset summary — show immediately with dashes (item 6)
-    document.getElementById("summaryProduct").textContent = `🍎 ${query}`;
-    document.getElementById("summaryFound").textContent   = "—";
-    document.getElementById("summaryCheapest").textContent= "—";
-    document.getElementById("summaryMostExp").textContent = "—";
-    const sumEl = document.getElementById("summary");
+    $("summaryProduct").textContent = `🍎 ${query}`;
+    $("summaryFound").textContent   = "—";
+    $("summaryCheapest").textContent= "—";
+    $("summaryMostExp").textContent = "—";
+    $("summaryHome").textContent    = "—";
+    $("summaryNote").textContent    = "";
+    const sumEl = $("summary");
     sumEl.style.display = "block";
     // small tick so display:block is painted before we add .visible
     requestAnimationFrame(() => sumEl.classList.add("visible"));
 
     // Hide cache badge
-    document.getElementById("cacheBadge").classList.remove("visible");
+    $("cacheBadge").classList.remove("visible");
 
     // Show skeleton table (item 3)
     showSkeleton();
@@ -630,17 +1200,17 @@ footer a { color: var(--accent); text-decoration: none; }
     activeSource = es;
 
     es.addEventListener("searching", () => {
-      document.getElementById("progressLabel").textContent =
-        `Resolving "${query}" on apple.com…`;
+      $("progressLabel").textContent = `Resolving "${query}" on apple.com…`;
     });
 
     es.addEventListener("meta", e => {
       const meta = JSON.parse(e.data);
       totalCountries = meta.total;
       productName    = meta.product;
-      document.getElementById("progressLabel").textContent =
-        `Fetching prices for "${meta.product}"…`;
-      document.getElementById("controls").style.display = "flex";
+      if (meta.rates && typeof meta.rates === "object") serverRates = meta.rates;
+      $("progressLabel").textContent = `Fetching prices for "${meta.product}"…`;
+      $("controls").style.display = "block";
+      rememberSearch(query);            // only searches Apple recognised are kept
 
       // If cached, store expiry for badge (item 7)
       if (meta.cached) {
@@ -655,11 +1225,10 @@ footer a { color: var(--accent); text-decoration: none; }
 
       const pct = totalCountries
         ? Math.round(receivedCount / totalCountries * 100) : 0;
-      document.getElementById("progressFill").style.width = pct + "%";
-      document.getElementById("progressCount").textContent =
+      $("progressFill").style.width = pct + "%";
+      $("progressCount").textContent =
         `${receivedCount}${totalCountries ? " / " + totalCountries : ""}`;
 
-      updateSummary();
       scheduleRender();
     });
 
@@ -669,18 +1238,17 @@ footer a { color: var(--accent); text-decoration: none; }
       activeSource = null;
       btn.disabled = false;
       btn.textContent = "Search";
-      document.getElementById("progressWrap").style.display = "none";
+      $("progressWrap").style.display = "none";
 
       // Show cache badge if result was served from cache (item 7)
       if (data.cached && cacheExpiresAt) {
         const mins = Math.max(1, Math.round((cacheExpiresAt - Date.now()) / 60000));
-        document.getElementById("cacheExpiry").textContent =
-          `· refreshes in ${mins}m`;
-        document.getElementById("cacheBadge").classList.add("visible");
+        $("cacheExpiry").textContent = `· refreshes in ${mins}m`;
+        $("cacheBadge").classList.add("visible");
       }
 
-      scheduleRender(true);
       fetchedAt = Date.now(); // J
+      scheduleRender(true);
     });
 
     es.addEventListener("error", e => {
@@ -691,25 +1259,52 @@ footer a { color: var(--accent); text-decoration: none; }
           ? "Could not reach the API. Make sure it is deployed and running."
           : "Connection lost before all results arrived.";
       }
-      document.getElementById("status").innerHTML =
-        `<div class="error-msg">⚠️ ${msg}</div>`;
+      // textContent, never innerHTML: the message echoes what was typed.
+      const box = document.createElement("div");
+      box.className = "error-msg";
+      box.textContent = `⚠️ ${msg}`;
+      $("status").replaceChildren(box);
       es.close();
       activeSource = null;
       btn.disabled = false;
       btn.textContent = "Search";
-      document.getElementById("progressWrap").style.display = "none";
+      $("progressWrap").style.display = "none";
       if (allResults.length === 0) {
-        document.getElementById("results").innerHTML       = "";
-        document.getElementById("summary").classList.remove("visible");
-        setTimeout(() => document.getElementById("summary").style.display = "none", 300);
-        document.getElementById("controls").style.display = "none";
+        $("results").innerHTML = "";
+        $("summary").classList.remove("visible");
+        setTimeout(() => $("summary").style.display = "none", 300);
+        $("controls").style.display = "none";
+      } else {
+        scheduleRender(true);
       }
     });
   }
 
+  // Back to the empty landing state (used by back/forward navigation).
+  function resetToLanding() {
+    if (activeSource) { activeSource.close(); activeSource = null; }
+    allResults = [];
+    rowEls.clear();
+    document.title = BASE_TITLE;
+    $("productInput").value = "";
+    $("clearBtn").style.display = "none";
+    $("searchBtn").disabled = false;
+    $("searchBtn").textContent = "Search";
+    $("status").innerHTML = "";
+    $("results").innerHTML = "";
+    $("chartView").innerHTML = "";
+    $("chartView").style.display = "none";
+    $("views").classList.remove("split");
+    $("controls").style.display = "none";
+    $("progressWrap").style.display = "none";
+    $("summary").classList.remove("visible");
+    $("summary").style.display = "none";
+  }
+
   // ── Skeleton (item 3) ─────────────────────────────────────────────────────
   function showSkeleton() {
-    const container = document.getElementById("results");
+    const container = $("results");
+    container.style.display = "";
     const skRows = Array.from({length: 6}, (_, i) => `
       <tr class="skeleton-row" style="animation-delay:${i * 80}ms">
         <td><span class="skel" style="width:18px"></span></td>
@@ -737,7 +1332,7 @@ footer a { color: var(--accent); text-decoration: none; }
 
   // ── Summary (items 4 + 6) ─────────────────────────────────────────────────
   function animateStat(id, newText) {
-    const el = document.getElementById(id);
+    const el = $(id);
     if (!el || el.textContent === newText) return;
     el.textContent = newText;
     el.classList.remove("flip");
@@ -745,18 +1340,19 @@ footer a { color: var(--accent); text-decoration: none; }
     el.classList.add("flip");
   }
 
-  function updateSummary() {
-    const available = allResults.filter(r => r.available);
-    if (!available.length) return;
-    const sorted   = [...available].sort((a,b) => (a.usdPrice||0)-(b.usdPrice||0));
-    const cheapest = sorted[0];
-    const mostExp  = sorted[sorted.length - 1];
+  function updateSummary(view) {
+    if (!view.priced.length) return;
+    const line = i => `${i.r.flag} ${i.r.country} — ${fmtMoney(i.value, view.cur)}`;
 
-    animateStat("summaryFound",    String(available.length));
-    animateStat("summaryCheapest",
-      `${cheapest.flag} ${cheapest.country} — ${cheapest.localPriceFormatted}`);
-    animateStat("summaryMostExp",
-      `${mostExp.flag} ${mostExp.country} — ${mostExp.localPriceFormatted}`);
+    animateStat("summaryFound",    String(view.priced.length));
+    animateStat("summaryCheapest", line(view.cheapest));
+    animateStat("summaryMostExp",  line(view.priciest));
+    animateStat("summaryHome", view.home ? line(view.home) : `${prefs.home} — no price`);
+
+    const notes = [];
+    if (view.cur !== view.wantedCur)
+      notes.push(`No exchange rate for ${view.wantedCur} yet — showing USD.`);
+    $("summaryNote").textContent = notes.join(" ");
   }
 </script>
 
@@ -764,108 +1360,107 @@ footer a { color: var(--accent); text-decoration: none; }
   // ── Table render — FLIP animated, with price bar + savings (items 1, 4) ──
   function rowKey(r) { return r.country; }
 
-  function buildRowEl(r, rank, minUsd, maxUsd) {
+  function buildRowEl(i, view) {
     const tr = document.createElement("tr");
-    tr.dataset.key = rowKey(r);
-    updateRowEl(tr, r, rank, minUsd, maxUsd);
+    tr.dataset.key = rowKey(i.r);
+    updateRowEl(tr, i, view);
     tr.classList.add("row-entering");
     tr.addEventListener("animationend",
       () => tr.classList.remove("row-entering"), {once: true});
     return tr;
   }
 
-  function updateRowEl(tr, r, rank, minUsd, maxUsd) {
-    const isCheapest = r.available && r.usdPrice === minUsd;
+  function updateRowEl(tr, i, view) {
+    const r = i.r;
+    const entering = tr.classList.contains("row-entering");
     tr.className = [
-      r.available ? "" : "unavailable",
-      isCheapest  ? "cheapest-row" : "",
-    ].join(" ").trim();
+      r.available  ? "" : "unavailable",
+      i.isCheapest ? "cheapest-row" : "",
+      i.isHome     ? "home-row" : "",
+      i.pinned     ? "pinned-row" : "",
+      entering     ? "row-entering" : "",
+    ].filter(Boolean).join(" ");
 
-    const rankClass = rank <= 3 ? ` rank-${rank}` : "";
-    const urlObj    = new URL(r.url);
-    const parts     = urlObj.pathname.replace(/\/$/, "").split("/").filter(Boolean);
-    const storeLabel = parts.length >= 2 ? `apple.com/${parts[0]}` : "apple.com";
+    const href = safeUrl(r.url);
+    let storeLabel = "apple.com";
+    try {
+      const parts = new URL(href, location.href).pathname.replace(/\/$/, "").split("/").filter(Boolean);
+      if (parts.length >= 2) storeLabel = `apple.com/${parts[0]}`;
+    } catch (_) {}
 
-    // Price bar width (item 1) — 100% = most expensive, min ~8%
-    const barPct = (r.available && maxUsd && maxUsd > 0)
-      ? Math.max(8, Math.round((r.usdPrice / maxUsd) * 100))
-      : 0;
+    const priced    = i.value !== null;
+    const rankClass = priced && i.rank <= 3 ? ` rank-${i.rank}` : "";
+    const rankHTML  = `<td class="rank hide-xs${rankClass}">${priced ? i.rank : "—"}</td>`;
 
-    // G — savings color-coded by severity
-    let savingsHTML = "";
-    if (r.available && !isCheapest && minUsd && r.usdPrice > minUsd) {
-      const saveDollars = (r.usdPrice - minUsd).toFixed(0);
-      const savePct     = Math.round((r.usdPrice - minUsd) / r.usdPrice * 100);
-      const cls = savePct <= 10 ? "cheap" : savePct <= 25 ? "mid" : "pricey";
-      savingsHTML = `<div class="badge-saving ${cls}">+$${saveDollars} (${savePct}% more)</div>`;
-    }
+    // Price bar width (item 1) — 100% = most expensive overall, min ~8%
+    const maxVal = view.priciest ? view.priciest.value : 0;
+    const barPct = priced && maxVal > 0
+      ? Math.min(100, Math.max(8, Math.round((i.value / maxVal) * 100))) : 0;
 
-    const rankHTML  = r.available
-      ? `<td class="rank hide-xs${rankClass}">${rank}</td>`
-      : `<td class="rank hide-xs">—</td>`;
+    const d = diffLabel(i, view);
+    const diffHTML = d ? `<div class="badge-saving ${d.cls}">${esc(d.text)}</div>` : "";
 
-    const priceHTML = r.available
-      ? `<td class="price-cell">
-           <div class="price-local">${r.localPriceFormatted}${isCheapest
+    let priceHTML;
+    if (!r.available) {
+      priceHTML = `<td class="price-cell"><span class="unavail-badge">${esc(r.reason)}</span></td>`;
+    } else {
+      // No "≈" line when it would just repeat the listed price (same currency).
+      const sameAsListed = priced && r.currency === view.cur && Math.abs(i.value - r.localPrice) < 0.005;
+      const converted = !priced ? `<span class="price-conv">No exchange rate</span>`
+        : sameAsListed ? ""
+        : `<span class="price-conv">≈ ${esc(fmtMoney(i.value, view.cur))}</span>`;
+      priceHTML = `<td class="price-cell">
+           <div class="price-local">${esc(r.localPriceFormatted)}${i.isCheapest
              ? '<span class="badge-cheap">Cheapest</span>' : ''}</div>
-           <div class="price-usd">≈ $${(r.usdPrice||0).toLocaleString("en-US",
-             {minimumFractionDigits:2,maximumFractionDigits:2})}</div>
-           ${savingsHTML}
+           ${converted ? `<div class="price-usd">${converted}</div>` : ""}
+           ${diffHTML}
            <div class="price-bar-wrap">
              <div class="price-bar-fill" style="width:${barPct}%"></div>
            </div>
-         </td>`
-      : `<td class="price-cell"><span class="unavail-badge">${r.reason}</span></td>`;
+         </td>`;
+    }
 
-    const linkOpacity = r.available ? "" : "style='opacity:.5'";
-    const linkHTML    = `<td><a class="store-link" href="${r.url}"
-      target="_blank" rel="noopener" ${linkOpacity}>${storeLabel} ↗</a></td>`;
+    const pinLabel = `${i.pinned ? "Unpin" : "Pin"} ${r.country}`;
+    const pinHTML  = r.available
+      ? `<button type="button" class="pin-btn${i.pinned ? " on" : ""}" data-pin="${esc(r.country)}"
+           aria-pressed="${i.pinned}" aria-label="${esc(pinLabel)}" title="${esc(pinLabel)}">${i.pinned ? "★" : "☆"}</button>`
+      : `<span class="pin-spacer"></span>`;
 
     tr.innerHTML = `
       ${rankHTML}
       <td><div class="country-cell">
-        <span class="flag">${r.flag}</span>${r.country}
-        <span class="tip">${r.country} · ${r.available ? r.currency : 'N/A'}</span>
+        ${pinHTML}
+        <span class="flag">${esc(r.flag)}</span><span class="country-name">${esc(r.country)}</span>
+        ${i.isHome ? '<span class="badge-home">Home</span>' : ""}
+        <span class="tip">${esc(r.country)} · ${r.available ? esc(r.currency) : "N/A"}</span>
       </div></td>
       ${priceHTML}
-      <td class="hide-mobile">${r.available ? r.currency : "—"}</td>
-      ${linkHTML}`;
+      <td class="hide-mobile hide-split">${r.available ? esc(r.currency) : "—"}</td>
+      <td class="store-cell"><a class="store-link${r.available ? "" : " dim"}" href="${esc(href)}"
+        target="_blank" rel="noopener" aria-label="${esc(`Apple store page for ${r.country}`)}"><span
+        class="store-text">${esc(storeLabel)}</span> ↗</a></td>`;
   }
 
-  function renderTable() {
-    const filter      = document.getElementById("filterInput")?.value.toLowerCase() ?? "";
-    const sort        = document.getElementById("sortSelect")?.value ?? "usd-asc";
-    const showUnavail = document.getElementById("showUnavail")?.checked ?? false;
+  function renderAll() {
+    if (!allResults.length) return;
+    const view = buildView();
+    const rows = visibleItems(view);
+    updateSummary(view);
+    syncControls(view);
+    renderTable(view, rows);
+    renderChart(view, rows);
+    const v = effectiveView();
+    $("views").classList.toggle("split", v === "both");
+    $("results").style.display   = v === "chart" ? "none" : "";
+    $("chartView").style.display = v === "table" ? "none" : "block";
+  }
 
-    let rows = allResults.filter(r => {
-      if (!showUnavail && !r.available) return false;
-      if (filter && !r.country.toLowerCase().includes(filter)) return false;
-      return true;
-    });
-
-    const available   = rows.filter(r =>  r.available);
-    const unavailable = rows.filter(r => !r.available);
-
-    available.sort((a, b) => {
-      switch (sort) {
-        case "usd-asc":      return (a.usdPrice||0) - (b.usdPrice||0);
-        case "usd-desc":     return (b.usdPrice||0) - (a.usdPrice||0);
-        case "country-asc":  return a.country.localeCompare(b.country);
-        case "country-desc": return b.country.localeCompare(a.country);
-        default:             return 0;
-      }
-    });
-
-    rows = [...available, ...unavailable];
-    const minUsd = available.length ? available[0].usdPrice : null;
-    const maxUsd = available.length ? available[available.length-1].usdPrice : null;
-    const container = document.getElementById("results");
+  function renderTable(view, rows) {
+    const container = $("results");
 
     if (!rows.length) {
-      if (allResults.length === 0) return;
       container.innerHTML =
-        `<p style="text-align:center;color:var(--muted);padding:40px">
-           No results match your filter.</p>`;
+        `<p class="empty-note">No countries match these filters.</p>`;
       return;
     }
 
@@ -876,20 +1471,21 @@ footer a { color: var(--accent); text-decoration: none; }
         <div class="table-wrap">
           <table>
             <thead><tr>
-              <th class="hide-xs" onclick="cycleSortRank()" title="Sort by price">#</th>
-              <th onclick="setSort('country-asc','country-desc')">
+              <th class="col-rank hide-xs" onclick="cycleSortRank()" title="Sort by price">#</th>
+              <th class="col-country" onclick="setSort('country-asc','country-desc')">
                 Country <span class="sort-icon">↕</span></th>
               <th onclick="setSort('usd-asc','usd-desc')">
                 Price <span class="sort-icon active">↕</span></th>
-              <th class="hide-mobile">Currency</th>
-              <th>Store</th>
+              <th class="hide-mobile hide-split">Currency</th>
+              <th class="col-store">Store</th>
             </tr></thead>
             <tbody></tbody>
           </table>
         </div>
-        <p class="results-footer"
-           style="margin-top:12px;font-size:12px;color:var(--muted);text-align:right"></p>`;
+        <p class="results-footer"></p>`;
       tableWrap = container.querySelector(".table-wrap");
+      // The scaffold was rebuilt, so previously rendered rows are detached.
+      rowEls.forEach(tr => { tr.style.opacity = ""; tr.style.transform = ""; });
     }
     const tbody = tableWrap.querySelector("tbody");
 
@@ -899,30 +1495,27 @@ footer a { color: var(--accent); text-decoration: none; }
       prePos.set(tr.dataset.key, tr.getBoundingClientRect().top));
 
     // Create/update row elements
-    let rank = 0;
-    rows.forEach(r => {
-      if (r.available) rank++;
-      const key  = rowKey(r);
-      const rk   = r.available ? rank : 0;
-      let   tr   = rowEls.get(key);
+    const keep = new Set();
+    rows.forEach(i => {
+      const key = rowKey(i.r);
+      keep.add(key);
+      let tr = rowEls.get(key);
       if (!tr) {
-        tr = buildRowEl(r, rk, minUsd, maxUsd);
+        tr = buildRowEl(i, view);
         rowEls.set(key, tr);
       } else {
-        updateRowEl(tr, r, rk, minUsd, maxUsd);
+        tr.style.opacity = "";
+        if (!tr.isConnected) tr.style.transform = "";
+        updateRowEl(tr, i, view);
       }
     });
 
     // Append in sorted order (moves nodes, no clone)
-    rows.forEach(r => tbody.appendChild(rowEls.get(rowKey(r))));
+    rows.forEach(i => tbody.appendChild(rowEls.get(rowKey(i.r))));
 
     // Remove filtered-out rows
     Array.from(tbody.querySelectorAll("tr[data-key]")).forEach(tr => {
-      if (!rows.find(r => rowKey(r) === tr.dataset.key)) {
-        tr.style.opacity   = "0";
-        tr.style.transform = "translateY(-6px)";
-        setTimeout(() => tr.remove(), 280);
-      }
+      if (!keep.has(tr.dataset.key)) tr.remove();
     });
 
     // FLIP: animate position deltas
@@ -949,24 +1542,229 @@ footer a { color: var(--accent); text-decoration: none; }
       if (activeSource !== null) {
         footer.innerHTML = `<span class="spinner"></span> Loading more countries…`;
       } else {
-        const ago = fetchedAt
-          ? `<span class="updated-badge">· Updated just now</span>` : "";
-        footer.innerHTML =
-          `${available.length} prices found · ${unavailable.length} countries skipped · Base/entry model ${ago}`;
+        const noPrice = allResults.filter(r => !r.available).length;
+        const showing = rows.filter(i => i.r.available).length;
+        const scope   = showing === view.priced.length
+          ? `${view.priced.length} prices found`
+          : `Showing ${showing} of ${view.priced.length} prices`;
+        footer.textContent =
+          `${scope} · ${noPrice} countries without a price · Base/entry model` +
+          (fetchedAt ? " · Updated just now" : "");
       }
     }
   }
 
+  // ── Chart view — how much more each country costs than the cheapest ──────
+  function renderChart(view, rows) {
+    const el = $("chartView");
+    const items = rows.filter(i => i.value !== null);
+    if (!items.length || !view.cheapest) {
+      el.innerHTML = `<p class="empty-note">No prices to chart for these filters.</p>`;
+      return;
+    }
+    const cheapestName = view.cheapest.r.country;
+    // Bars start at the cheapest price (zero difference) and grow with the extra cost.
+    const maxPct = Math.max(1, ...items.map(i => i.diffPct));
+
+    const bars = items.map(i => {
+      const width = i.isCheapest ? 0 : (i.diffPct / maxPct) * 100;
+      const delta = i.isCheapest
+        ? "Cheapest"
+        : `+${fmtMoney(i.diff, view.cur)} (+${fmtPct(i.diffPct)})`;
+      const tip = i.isCheapest
+        ? `${i.r.country}: ${fmtMoney(i.value, view.cur)} — the cheapest`
+        : `${i.r.country}: ${fmtMoney(i.value, view.cur)} — ${delta} vs ${cheapestName}`;
+      return `
+        <div class="chart-row${i.isHome ? " is-home" : ""}" role="listitem" title="${esc(tip)}">
+          <div class="chart-label">
+            <span class="flag">${esc(i.r.flag)}</span>
+            <span class="chart-name">${esc(i.r.country)}</span>
+            ${i.isHome ? '<span class="badge-home">Home</span>' : ""}
+          </div>
+          <div class="chart-track">
+            <span class="chart-axis" style="left:0%"></span>
+            <span class="chart-bar ${i.isCheapest ? "same" : "more"}" style="left:0%;width:${width}%"></span>
+          </div>
+          <div class="chart-value">
+            <span class="chart-price">${esc(fmtMoney(i.value, view.cur))}</span>
+            <span class="chart-delta">${esc(delta)}</span>
+          </div>
+        </div>`;
+    }).join("");
+
+    el.innerHTML = `
+      <div class="chart-card">
+        <div class="chart-head">
+          <div class="chart-title">Extra cost vs the cheapest (${esc(cheapestName)})</div>
+        </div>
+        <div class="chart-rows" role="list" aria-label="Extra cost over the cheapest price, by country">${bars}</div>
+        <p class="chart-foot">${items.length} countries · listed prices converted to ${esc(view.cur)}</p>
+      </div>`;
+  }
+
+  // ── Controls ─────────────────────────────────────────────────────────────
+  function fillSelect(sel, options, value) {
+    sel.innerHTML = options.map(o =>
+      `<option value="${esc(o.value)}">${esc(o.label)}</option>`).join("");
+    sel.value = value;
+  }
+  function initControls() {
+    fillSelect($("homeSelect"), COUNTRY_NAMES.map(n => ({ value: n, label: n })), prefs.home);
+    fillSelect($("currencySelect"),
+      [{ value: "", label: "Home currency" }, ...CURRENCIES.map(c => ({ value: c, label: c }))],
+      prefs.currency || "");
+    $("regionChips").innerHTML =
+      [["all", "All regions"], ...REGIONS.map(r => [r, r])].map(([v, label]) =>
+        `<button type="button" class="seg-btn" data-region="${esc(v)}"
+           aria-pressed="${v === regionFilter}">${esc(label)}</button>`).join("");
+    renderRecent();
+    syncControls(null);
+  }
+  function syncControls(view) {
+    const home = info(prefs.home);
+    const opt  = $("currencySelect").querySelector('option[value=""]');
+    if (opt && home) opt.textContent = `${home.cur} (home)`;
+    document.querySelectorAll("#regionChips .seg-btn").forEach(b =>
+      b.setAttribute("aria-pressed", String(b.dataset.region === regionFilter)));
+    document.querySelectorAll("#viewToggle .seg-btn").forEach(b =>
+      b.setAttribute("aria-pressed", String(b.dataset.view === effectiveView())));
+  }
+
   function setSort(asc, desc) {
-    const sel = document.getElementById("sortSelect");
+    const sel = $("sortSelect");
     sel.value = sel.value === asc ? desc : asc;
-    renderTable();
+    renderAll();
   }
   function cycleSortRank() { setSort("usd-asc", "usd-desc"); }
 
-  document.getElementById("productInput").addEventListener("keydown", e => {
-    if (e.key === "Enter") search();
+  function togglePin(country) {
+    if (!COUNTRY_INFO[country]) return;
+    prefs.pinned = prefs.pinned.includes(country)
+      ? prefs.pinned.filter(c => c !== country)
+      : [...prefs.pinned, country];
+    savePrefs();
+    renderAll();
+  }
+
+  // ── CSV export of the rows currently shown ───────────────────────────────
+  function csvCell(v) {
+    let s = v === null || v === undefined ? "" : String(v);
+    if (/^[=+\-@\t\r]/.test(s) && !/^[+-]?\d+(\.\d+)?$/.test(s)) s = "'" + s; // spreadsheet formula guard
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+  function buildCsv() {
+    const view = buildView();
+    const rows = visibleItems(view);
+    const round2  = n => (isNum(n) ? Math.round(n * 100) / 100 : "");
+    const header = ["Rank", "Country", "Region", "Pinned", "Local currency", "Listed local price",
+      `Price (${view.cur})`, "Listed price (USD)",
+      `More than cheapest (${view.cur})`, "More than cheapest (%)", "Status", "Store URL"];
+    const lines = rows.map(i => [
+      i.value !== null ? i.rank : "",
+      i.r.country,
+      i.c ? i.c.region : "",
+      i.pinned ? "yes" : "",
+      i.r.available ? i.r.currency : (i.c ? i.c.cur : ""),
+      i.r.available ? i.r.localPrice : "",
+      round2(i.value),
+      i.r.available ? round2(i.r.usdPrice) : "",
+      round2(i.diff),
+      isNum(i.diffPct) ? Math.round(i.diffPct * 10) / 10 : "",
+      i.r.available ? "Available" : (i.r.reason || "Unavailable"),
+      safeUrl(i.r.url),
+    ]);
+    return [header, ...lines].map(l => l.map(csvCell).join(",")).join("\r\n") + "\r\n";
+  }
+  function exportCsv() {
+    if (!allResults.length) return;
+    const slug = productName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "apple";
+    const blob = new Blob(["﻿" + buildCsv()], { type: "text/csv;charset=utf-8" }); // BOM for Excel
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${slug}-prices-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  // ── Wiring ───────────────────────────────────────────────────────────────
+  const productInput = $("productInput");
+
+  productInput.addEventListener("input", function () {
+    $("clearBtn").style.display = this.value.length ? "flex" : "none";
+    openSuggest();
   });
+  productInput.addEventListener("keydown", e => {
+    if (e.key === "ArrowDown")      { e.preventDefault(); if (!suggestItems.length) openSuggest(); moveSuggest(1); }
+    else if (e.key === "ArrowUp")   { e.preventDefault(); moveSuggest(-1); }
+    else if (e.key === "Escape")    { closeSuggest(); }
+    else if (e.key === "Enter") {
+      if (suggestIndex >= 0 && suggestItems[suggestIndex]) productInput.value = suggestItems[suggestIndex];
+      search();
+    }
+  });
+  productInput.addEventListener("blur", () => setTimeout(closeSuggest, 120));
+  // mousedown (not click) so the choice lands before the input's blur closes the list
+  $("suggestList").addEventListener("mousedown", e => {
+    const li = e.target.closest("[data-suggest]");
+    if (!li) return;
+    e.preventDefault();
+    quickSearch(li.dataset.suggest);
+  });
+
+  $("recentWrap").addEventListener("click", e => {
+    if (e.target.id === "clearRecentBtn") { clearRecent(); return; }
+    const chip = e.target.closest("[data-recent]");
+    if (chip) quickSearch(chip.dataset.recent);
+  });
+
+  $("homeSelect").addEventListener("change", e => { prefs.home = e.target.value; savePrefs(); renderAll(); syncControls(null); });
+  $("currencySelect").addEventListener("change", e => { prefs.currency = e.target.value || null; savePrefs(); renderAll(); });
+
+  $("regionChips").addEventListener("click", e => {
+    const b = e.target.closest("[data-region]");
+    if (!b) return;
+    regionFilter = b.dataset.region;
+    renderAll();
+    syncControls(null);
+  });
+  $("viewToggle").addEventListener("click", e => {
+    const b = e.target.closest("[data-view]");
+    if (!b) return;
+    if (!VIEWS.includes(b.dataset.view)) return;
+    prefs.view = b.dataset.view;
+    savePrefs();
+    renderAll();
+    syncControls(null);
+  });
+  wideQuery.addEventListener("change", () => { renderAll(); syncControls(null); });
+  $("results").addEventListener("click", e => {
+    const b = e.target.closest("[data-pin]");
+    if (b) togglePin(b.dataset.pin);
+  });
+
+  window.addEventListener("popstate", () => {
+    const q = queryFromUrl();
+    if (q) {
+      productInput.value = q;
+      $("clearBtn").style.display = "flex";
+      search({ fromHistory: true });
+    } else {
+      resetToLanding();
+    }
+  });
+
+  initControls();
+
+  // A shared link (?q=MacBook+Air) runs its search straight away.
+  (function runSharedSearch() {
+    const q = queryFromUrl();
+    if (!q) return;
+    productInput.value = q;
+    $("clearBtn").style.display = "flex";
+    search({ fromHistory: true });
+  })();
 </script>
 </body>
 </html>
