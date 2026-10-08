@@ -65,6 +65,8 @@ apple-global-price-tracker/
 5. Copy your service URL, e.g. `https://apple-products-global-price-tracker.onrender.com`
 
 > **Free tier note:** Render spins down the service after ~15 min of inactivity. The first request after a cold start takes 30–60 s to wake up. In-memory caches (exchange rates, slug resolutions, price results) are cleared on each cold start.
+>
+> To soften this, the page sends a request to `/api/health` as soon as it loads, so the service starts waking while the visitor is still typing. If a search is still waiting for the service's first reply (the ping has gone unanswered for 1.5 s, or the search for 3 s), the progress area shows "Waking up the server… this can take up to a minute" with a seconds counter and a moving bar.
 
 ### Step 2 — Configure the Frontend
 

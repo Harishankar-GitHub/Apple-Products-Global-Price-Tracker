@@ -242,6 +242,21 @@ header {
   from { background-position: 200% 0; }
   to   { background-position: -200% 0; }
 }
+/* No results yet (server waking up, or product being looked up): a sliding
+   segment instead of an empty, motionless track. */
+.progress-bar-bg.indeterminate .progress-bar-fill {
+  width: 30% !important; transition: none;
+  animation: shimmerBar 1.8s linear infinite, progressSlide 1.3s ease-in-out infinite;
+}
+@keyframes progressSlide {
+  from { transform: translateX(-105%); }
+  to   { transform: translateX(340%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress-bar-bg.indeterminate .progress-bar-fill {
+    width: 100% !important; animation: none; opacity: .45;
+  }
+}
 
 /* ─── Status / error ─────────────────────────────────────────────────────── */
 #status {
@@ -673,7 +688,7 @@ footer a { color: var(--accent); text-decoration: none; }
     <span id="progressLabel">Searching…</span>
     <span id="progressCount"></span>
   </div>
-  <div class="progress-bar-bg">
+  <div class="progress-bar-bg" id="progressBar">
     <div class="progress-bar-fill" id="progressFill"></div>
   </div>
 </div>
@@ -1148,6 +1163,56 @@ footer a { color: var(--accent); text-decoration: none; }
     $("productInput").setAttribute("aria-activedescendant", `suggest-${suggestIndex}`);
   }
 
+  // ── Server wake-up ───────────────────────────────────────────────────────
+  // The API host goes to sleep when idle and needs up to a minute to start
+  // again. A small request on page load starts that early, while the visitor
+  // is still typing. If a search is then still waiting for the server's first
+  // reply, the progress area says so instead of sitting still.
+  const WAKE_PING_SLOW_MS    = 1500;    // ping unanswered this long → server is probably asleep
+  const WAKE_HINT_MS         = 3000;    // search unanswered this long → say we are waking it
+  const WAKE_PING_TIMEOUT_MS = 90000;
+  const WAKE_TEXT = "Waking up the server… this can take up to a minute";
+  let pingPending   = false;
+  let pingStartedAt = 0;
+  let wakeTimer     = null;             // runs while a search waits for the first reply
+
+  function wakeServer() {
+    if (typeof fetch !== "function") return;
+    pingPending   = true;
+    pingStartedAt = Date.now();
+    const ctl    = typeof AbortController === "function" ? new AbortController() : null;
+    const giveUp = setTimeout(() => { if (ctl) ctl.abort(); }, WAKE_PING_TIMEOUT_MS);
+    const finish = () => { pingPending = false; clearTimeout(giveUp); };
+    try {
+      fetch(`${API_BASE}/api/health`, { cache: "no-store", signal: ctl ? ctl.signal : undefined })
+        .then(finish, finish);          // any answer, or a failure, ends the wait
+    } catch (_) { finish(); }
+  }
+
+  // Called when a search is sent; stopWaitingForServer() is called on its first reply.
+  function startWaitingForServer() {
+    stopWaitingForServer();
+    const startedAt = Date.now();
+    wakeTimer = setInterval(() => {
+      const waited   = Date.now() - startedAt;
+      const pingSlow = pingPending && Date.now() - pingStartedAt >= WAKE_PING_SLOW_MS;
+      if (!pingSlow && waited < WAKE_HINT_MS) return;
+      const label = $("progressLabel");
+      if (label.textContent !== WAKE_TEXT) label.textContent = WAKE_TEXT;
+      const count = $("progressCount");
+      count.setAttribute("aria-hidden", "true");   // a ticking counter should not be read out each second
+      count.textContent = `${Math.round(waited / 1000)}s`;
+    }, 250);
+  }
+  function stopWaitingForServer() {
+    if (wakeTimer === null) return;
+    clearInterval(wakeTimer);
+    wakeTimer = null;
+    const count = $("progressCount");
+    count.removeAttribute("aria-hidden");
+    count.textContent = "";
+  }
+
   // ── Main search ───────────────────────────────────────────────────────────
   // opts.fromHistory: the search came from the URL (page load or back/forward),
   // so the address bar is already right and must not get a new history entry.
@@ -1187,6 +1252,7 @@ footer a { color: var(--accent); text-decoration: none; }
     $("progressLabel").textContent  = `Resolving "${query}"…`;
     $("progressCount").textContent  = "";
     $("progressFill").style.width   = "0%";
+    $("progressBar").classList.add("indeterminate");   // until the first price arrives
 
     // Reset summary — show immediately with dashes (item 6)
     $("summaryProduct").textContent = `🍎 ${query}`;
@@ -1209,12 +1275,15 @@ footer a { color: var(--accent); text-decoration: none; }
     const url = `${API_BASE}/api/prices/stream?product=${encodeURIComponent(query)}`;
     const es  = new EventSource(url);
     activeSource = es;
+    startWaitingForServer();
 
     es.addEventListener("searching", () => {
+      stopWaitingForServer();           // first reply: the server is awake
       $("progressLabel").textContent = `Resolving "${query}" on apple.com…`;
     });
 
     es.addEventListener("meta", e => {
+      stopWaitingForServer();
       const meta = JSON.parse(e.data);
       totalCountries = meta.total;
       productName    = meta.product;
@@ -1233,6 +1302,8 @@ footer a { color: var(--accent); text-decoration: none; }
     });
 
     es.addEventListener("result", e => {
+      stopWaitingForServer();
+      $("progressBar").classList.remove("indeterminate");
       const row = JSON.parse(e.data);
       allResults.push(row);
       receivedCount++;
@@ -1247,6 +1318,8 @@ footer a { color: var(--accent); text-decoration: none; }
     });
 
     es.addEventListener("done", e => {
+      stopWaitingForServer();
+      $("progressBar").classList.remove("indeterminate");
       const data = JSON.parse(e.data);
       es.close();
       activeSource = null;
@@ -1271,6 +1344,8 @@ footer a { color: var(--accent); text-decoration: none; }
     });
 
     es.addEventListener("error", e => {
+      stopWaitingForServer();
+      $("progressBar").classList.remove("indeterminate");
       let msg = null;
       try { if (e.data) msg = JSON.parse(e.data).error; } catch (_) {}
       if (!msg) {
@@ -1302,6 +1377,7 @@ footer a { color: var(--accent); text-decoration: none; }
   // Back to the empty landing state (used by back/forward navigation).
   function resetToLanding() {
     if (activeSource) { activeSource.close(); activeSource = null; }
+    stopWaitingForServer();
     allResults = [];
     rowEls.clear();
     document.title = BASE_TITLE;
@@ -1776,6 +1852,7 @@ footer a { color: var(--accent); text-decoration: none; }
   });
 
   initControls();
+  wakeServer();
 
   // A shared link (?q=MacBook+Air) runs its search straight away.
   (function runSharedSearch() {
