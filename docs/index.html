@@ -879,6 +879,7 @@ footer a { color: var(--accent); text-decoration: none; }
   let receivedCount  = 0;
   let activeSource   = null;
   let cacheExpiresAt = null;   // Date when cached result expires
+  let cacheAgeMs     = null;   // how old a cached result is, as reported by the API
   let fetchedAt      = null;   // J — timestamp when last fetch completed
   let serverRates    = null;   // currency → units per 1 USD, sent by the API
   let regionFilter   = "all";
@@ -945,6 +946,14 @@ footer a { color: var(--accent); text-decoration: none; }
     } catch (_) {
       return `${cur} ${amount.toFixed(digits)}`;
     }
+  }
+  // 45000 → "under a minute", 720000 → "12 min", 7500000 → "2 h 5 min"
+  function fmtDuration(ms) {
+    const mins = Math.floor(Math.max(0, ms) / 60000);
+    if (mins < 1)  return "under a minute";
+    if (mins < 60) return `${mins} min`;
+    const h = Math.floor(mins / 60), m = mins % 60;
+    return m ? `${h} h ${m} min` : `${h} h`;
   }
   function fmtPct(p) {
     const a = Math.abs(p);
@@ -1163,6 +1172,8 @@ footer a { color: var(--accent); text-decoration: none; }
     totalCountries = 0;
     receivedCount  = 0;
     cacheExpiresAt = null;
+    cacheAgeMs     = null;
+    fetchedAt      = null;
     serverRates    = null;
     rowEls.clear();
 
@@ -1212,9 +1223,12 @@ footer a { color: var(--accent); text-decoration: none; }
       $("controls").style.display = "block";
       rememberSearch(query);            // only searches Apple recognised are kept
 
-      // If cached, store expiry for badge (item 7)
+      // If cached, keep its age and expiry for the badge (item 7).
+      // The API reports both; an older API sends neither and cached for 5 minutes.
       if (meta.cached) {
-        cacheExpiresAt = Date.now() + 5 * 60 * 1000; // 5 min TTL
+        cacheAgeMs = isNum(meta.ageSeconds) ? Math.max(0, meta.ageSeconds) * 1000 : null;
+        cacheExpiresAt = Date.now() + (isNum(meta.expiresInSeconds)
+          ? Math.max(0, meta.expiresInSeconds) * 1000 : 5 * 60 * 1000);
       }
     });
 
@@ -1242,12 +1256,17 @@ footer a { color: var(--accent); text-decoration: none; }
 
       // Show cache badge if result was served from cache (item 7)
       if (data.cached && cacheExpiresAt) {
-        const mins = Math.max(1, Math.round((cacheExpiresAt - Date.now()) / 60000));
-        $("cacheExpiry").textContent = `· refreshes in ${mins}m`;
+        const left = cacheExpiresAt - Date.now();
+        const mins = Math.max(1, Math.round(left / 60000));
+        $("cacheExpiry").textContent = cacheAgeMs !== null
+          ? `· prices from ${fmtDuration(cacheAgeMs)} ago`
+          : `· refreshes in ${mins}m`;
+        $("cacheBadge").title = `Served from the server's saved results. Fetched again from Apple in ${fmtDuration(left)}.`;
         $("cacheBadge").classList.add("visible");
       }
 
-      fetchedAt = Date.now(); // J
+      // J — when these prices were actually fetched from Apple
+      fetchedAt = Date.now() - (data.cached && cacheAgeMs ? cacheAgeMs : 0);
       scheduleRender(true);
     });
 
@@ -1549,7 +1568,8 @@ footer a { color: var(--accent); text-decoration: none; }
           : `Showing ${showing} of ${view.priced.length} prices`;
         footer.textContent =
           `${scope} · ${noPrice} countries without a price · Base/entry model` +
-          (fetchedAt ? " · Updated just now" : "");
+          (fetchedAt ? ` · Updated ${Date.now() - fetchedAt < 60000
+            ? "just now" : fmtDuration(Date.now() - fetchedAt) + " ago"}` : "");
       }
     }
   }

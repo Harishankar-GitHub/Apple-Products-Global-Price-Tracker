@@ -32,9 +32,15 @@ RATES_TTL = 30 * 60
 # Cache 2 — Slug resolution  (no TTL — valid for process lifetime)
 _slug_cache: dict[str, Optional[tuple[str, str]]] = {}
 
-# Cache 3 — Price results per slug  (TTL: 5 min)
+# Cache 3 — Price results per slug
+#   Apple changes prices rarely, so a complete result set is kept for hours.
+#   A set where any country failed to load (timeout, rate limit, server error),
+#   or where no country returned a price, is kept only briefly so that a bad
+#   fetch is retried soon instead of being served for hours.
+#   Each entry: {"ts": monotonic time stored, "ttl": seconds, "payload": {...}}
 _results_cache: dict[str, dict] = {}
-RESULTS_TTL = 5 * 60
+RESULTS_TTL       = 6 * 60 * 60   # complete result set  (6 hours)
+RESULTS_TTL_SHORT = 5 * 60        # incomplete result set (5 minutes)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -357,14 +363,21 @@ async def _fetch_price_async(
     flag      = COUNTRY_FLAGS.get(country, "🏳")
     timeout   = aiohttp.ClientTimeout(total=20)
 
+    # True when a request failed for a reason that may not last (timeout, network
+    # error, rate limit, server error) — as opposed to a clean 200 or 404.
+    had_error = False
+
     async def _try(url: str) -> Optional[float]:
+        nonlocal had_error
         try:
             async with session.get(url, timeout=timeout, allow_redirects=True) as r:
                 if r.status == 200:
                     html = await r.text()
                     return extract_low_price(html, min_price)
+                if r.status != 404:
+                    had_error = True
         except Exception:
-            pass
+            had_error = True
         return None
 
     # Try shop URL first; fall back to product URL.
@@ -380,10 +393,17 @@ async def _fetch_price_async(
                 if r.status == 404:
                     return {"country": country, "flag": flag, "available": False,
                             "reason": "Not available in this country", "url": prod_url}
+                if r.status != 200:
+                    had_error = True
         except Exception:
-            pass
-        return {"country": country, "flag": flag, "available": False,
-                "reason": "Price not found", "url": prod_url}
+            had_error = True
+        row = {"country": country, "flag": flag, "available": False,
+               "reason": "Price not found", "url": prod_url}
+        if had_error:
+            # Internal marker, removed before the row is sent or cached
+            # (see _pop_transient): this "no price" may be temporary.
+            row["_transient"] = True
+        return row
 
     rate      = rates.get(currency, 0)
     usd_price = round(price_val / rate, 2) if rate else None
@@ -450,6 +470,71 @@ def _stream_prices_into_queue(
 
 
 # ---------------------------------------------------------------------------
+# Results cache helpers (Cache 3)
+# ---------------------------------------------------------------------------
+
+def _pop_transient(row: dict) -> bool:
+    """Strip the internal marker from a row; True if the row failed temporarily."""
+    return bool(row.pop("_transient", False))
+
+
+def _sorted_results(rows: list[dict]) -> list[dict]:
+    """Available countries cheapest-first, then unavailable ones A→Z."""
+    available   = sorted([r for r in rows if     r.get("available")],
+                         key=lambda r: r.get("usdPrice") or 999999)
+    unavailable = sorted([r for r in rows if not r.get("available")],
+                         key=lambda r: r["country"])
+    return available + unavailable
+
+
+def _build_payload(product: str, slug: str, category: str,
+                   rates: dict[str, float], rows: list[dict]) -> dict:
+    return {"product": product, "slug": slug, "category": category,
+            "ratesDate": "live", "rates": rates_for_client(rates),
+            "results": _sorted_results(rows)}
+
+
+def _cache_put(slug: str, payload: dict, complete: bool) -> int:
+    """Store a result set and return the TTL (seconds) it was given.
+    `complete` is False when any country failed for a temporary reason."""
+    has_price = any(r.get("available") for r in payload["results"])
+    ttl = RESULTS_TTL if (complete and has_price) else RESULTS_TTL_SHORT
+    _results_cache[slug] = {"ts": time.monotonic(), "ttl": ttl, "payload": payload}
+    return ttl
+
+
+def _cache_get(slug: str) -> Optional[tuple[dict, int, int]]:
+    """Return (payload, age_seconds, expires_in_seconds) for a live entry, else None."""
+    entry = _results_cache.get(slug)
+    if not entry:
+        return None
+    age = time.monotonic() - entry["ts"]
+    ttl = entry.get("ttl", RESULTS_TTL_SHORT)
+    if age >= ttl:
+        _results_cache.pop(slug, None)              # expired — free the memory
+        return None
+    return entry["payload"], int(age), max(0, int(ttl - age))
+
+
+def _with_current_rates(payload: dict, rates: dict[str, float]) -> dict:
+    """
+    Copy of a cached payload with USD prices re-derived from current exchange
+    rates. Local prices are what stays valid for hours; rates are refreshed
+    every 30 min (Cache 1), so conversions must not age with the cached rows.
+    If no rates are available the cached conversions are returned unchanged.
+    """
+    if not rates:
+        return payload
+    rows = []
+    for row in payload["results"]:
+        rate = rates.get(row.get("currency"), 0) if row.get("available") else 0
+        if rate:
+            row = {**row, "usdPrice": round(row["localPrice"] / rate, 2)}
+        rows.append(row)
+    return {**payload, "rates": rates_for_client(rates), "results": _sorted_results(rows)}
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
@@ -468,23 +553,21 @@ def get_prices():
 
     slug, category = result
 
-    cached = _results_cache.get(slug)
-    if cached and (time.monotonic() - cached["ts"]) < RESULTS_TTL:
-        return jsonify(cached["payload"])            # Cache 3 hit
+    hit = _cache_get(slug)
+    if hit:                                          # Cache 3 hit
+        payload, age, expires_in = hit
+        payload = _with_current_rates(payload, fetch_exchange_rates())
+        return jsonify({**payload, "product": product, "cached": True,
+                        "ageSeconds": age, "expiresInSeconds": expires_in})
 
     rates      = fetch_exchange_rates()              # Cache 1
     all_rows   = asyncio.run(_fetch_all_prices(slug, category, rates))
+    failed     = [_pop_transient(r) for r in all_rows]   # strips the marker from every row
 
-    available   = sorted([r for r in all_rows if     r.get("available")],
-                         key=lambda r: r.get("usdPrice") or 999999)
-    unavailable = sorted([r for r in all_rows if not r.get("available")],
-                         key=lambda r: r["country"])
-
-    payload = {"product": product, "slug": slug, "category": category,
-               "ratesDate": "live", "rates": rates_for_client(rates),
-               "results": available + unavailable}
-    _results_cache[slug] = {"ts": time.monotonic(), "payload": payload}
-    return jsonify(payload)
+    payload = _build_payload(product, slug, category, rates, all_rows)
+    ttl     = _cache_put(slug, payload, complete=not any(failed))
+    return jsonify({**payload, "cached": False,
+                    "ageSeconds": 0, "expiresInSeconds": ttl})
 
 
 @app.route("/api/prices/stream")
@@ -510,12 +593,16 @@ def get_prices_stream():
         slug, category = result
 
         # Cache 3 hit — replay stored rows as fast SSE events
-        cached = _results_cache.get(slug)
-        if cached and (time.monotonic() - cached["ts"]) < RESULTS_TTL:
-            total = len(cached["payload"]["results"])
-            cached_rates = cached["payload"].get("rates", {})
-            yield f"event: meta\ndata: {json.dumps({'product': product, 'slug': slug, 'category': category, 'total': total, 'cached': True, 'rates': cached_rates})}\n\n"
-            for row in cached["payload"]["results"]:
+        hit = _cache_get(slug)
+        if hit:
+            payload, age, expires_in = hit
+            payload = _with_current_rates(payload, fetch_exchange_rates())
+            meta = {"product": product, "slug": slug, "category": category,
+                    "total": len(payload["results"]), "cached": True,
+                    "ageSeconds": age, "expiresInSeconds": expires_in,
+                    "rates": payload.get("rates", {})}
+            yield f"event: meta\ndata: {json.dumps(meta)}\n\n"
+            for row in payload["results"]:
                 yield f"event: result\ndata: {json.dumps(row)}\n\n"
             yield f"event: done\ndata: {json.dumps({'product': product, 'cached': True})}\n\n"
             return
@@ -531,6 +618,7 @@ def get_prices_stream():
         # without waiting for all 50 countries to finish.
         q        = queue.Queue()
         all_rows = []
+        complete = True             # becomes False if any country failed temporarily
 
         t = threading.Thread(
             target=_stream_prices_into_queue,
@@ -543,20 +631,16 @@ def get_prices_stream():
             row = q.get()           # blocks only until the next country finishes
             if row is _SENTINEL:
                 break
+            if _pop_transient(row):
+                complete = False
             all_rows.append(row)
             yield f"event: result\ndata: {json.dumps(row)}\n\n"
 
         t.join()
 
         # Store in Cache 3
-        available   = sorted([r for r in all_rows if     r.get("available")],
-                             key=lambda r: r.get("usdPrice") or 999999)
-        unavailable = sorted([r for r in all_rows if not r.get("available")],
-                             key=lambda r: r["country"])
-        payload = {"product": product, "slug": slug, "category": category,
-                   "ratesDate": "live", "rates": rates_for_client(rates),
-                   "results": available + unavailable}
-        _results_cache[slug] = {"ts": time.monotonic(), "payload": payload}
+        payload = _build_payload(product, slug, category, rates, all_rows)
+        _cache_put(slug, payload, complete)
 
         yield f"event: done\ndata: {json.dumps({'product': product})}\n\n"
 
@@ -588,12 +672,15 @@ def cache_status():
         },
         "results_cache": {
             "entries": len(_results_cache),
+            "ttl_seconds":            RESULTS_TTL,
+            "ttl_seconds_incomplete": RESULTS_TTL_SHORT,
             "slugs": {
                 slug: {
                     "age_seconds": round(now - v["ts"]),
-                    "expires_in":  max(0, round(RESULTS_TTL - (now - v["ts"]))),
+                    "ttl_seconds": v.get("ttl", RESULTS_TTL_SHORT),
+                    "expires_in":  max(0, round(v.get("ttl", RESULTS_TTL_SHORT) - (now - v["ts"]))),
                 }
-                for slug, v in _results_cache.items()
+                for slug, v in list(_results_cache.items())
             },
         },
     })
