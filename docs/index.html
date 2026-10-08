@@ -327,12 +327,7 @@ header {
   font-size: 11px; font-weight: 600; letter-spacing: .4px;
   text-transform: uppercase; color: var(--muted);
 }
-.tax-rates { display: flex; gap: 12px; align-items: flex-end; }
-.rate-input {
-  width: 92px; border: 1px solid var(--border); border-radius: var(--radius-sm);
-  padding: 8px 10px; font-size: 14px; background: var(--surface); color: var(--text);
-}
-.rate-input:focus-visible, .sort-select:focus-visible {
+.sort-select:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 1px;
 }
 
@@ -374,7 +369,15 @@ header {
 .toggle-unavail input { cursor: pointer; }
 
 /* ─── Results table ──────────────────────────────────────────────────────── */
-#results { max-width: 1100px; margin: 16px auto 48px; padding: 0 24px; }
+.views { max-width: 1100px; margin: 16px auto 48px; padding: 0 24px; }
+#results, #chartView { min-width: 0; }
+/* Table and chart next to each other (wide screens only — see effectiveView()) */
+.views.split {
+  display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: 16px; align-items: start;
+}
+.views.split .hide-split { display: none; }
+.views.split .price-cell { min-width: 0; }
 .table-wrap {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); box-shadow: var(--shadow);
@@ -479,7 +482,7 @@ tbody tr.cheapest-row .price-bar-fill { background: var(--green); }
 .badge-saving.mid    { color: #f5a623; }
 .badge-saving.pricey { color: var(--red); }
 
-/* ─── Home, pins, tax notes ───────────────────────────────────────────────── */
+/* ─── Home and pins ─────────────────────────────────────────────────────────── */
 tbody tr.home-row { border-left-color: var(--accent); }
 tbody tr.pinned-row { background: var(--surface2); }
 tbody tr.cheapest-row.pinned-row { background: rgba(26,158,92,.10); }
@@ -496,19 +499,11 @@ tbody tr.cheapest-row.pinned-row { background: rgba(26,158,92,.10); }
 .pin-btn:hover { color: var(--gold); }
 .pin-btn.on { color: var(--gold); }
 .pin-spacer { width: 25px; flex-shrink: 0; }
-.price-conv { margin-right: 8px; }
-.tax-note {
-  font-size: 11px; color: var(--muted);
-  background: var(--surface2); border-radius: 5px; padding: 1px 6px;
-  white-space: nowrap;
-}
-tbody tr.pinned-row .tax-note, tbody tr:hover .tax-note { background: var(--border); }
 .store-link.dim { opacity: .5; }
 .empty-note { text-align: center; color: var(--muted); padding: 40px; }
 .results-footer { margin-top: 12px; font-size: 12px; color: var(--muted); text-align: right; }
 
 /* ─── Chart view ─────────────────────────────────────────────────────────── */
-#chartView { max-width: 1100px; margin: 16px auto 48px; padding: 0 24px; }
 .chart-card {
   --below: #1f6fd0; --above: #d1493c; --same: #8e8e93;
   background: var(--surface); border: 1px solid var(--border);
@@ -547,6 +542,18 @@ tbody tr.pinned-row .tax-note, tbody tr:hover .tax-note { background: var(--bord
 .chart-price { font-weight: 600; }
 .chart-delta { color: var(--muted); margin-left: 6px; }
 .chart-foot { margin-top: 12px; font-size: 12px; color: var(--muted); text-align: right; }
+
+/* Side by side: the chart card matches the table's height and scrolls on its own;
+   rows use the compact layout (name and figures on one line, bar beneath). */
+.views.split .chart-card { display: flex; flex-direction: column; max-height: 72vh; padding: 16px; }
+.views.split .chart-rows { overflow-y: auto; min-height: 0; padding-right: 4px; }
+.views.split .chart-row { grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 7px 6px; }
+.views.split .chart-label { grid-column: 1; grid-row: 1; }
+.views.split .chart-value { grid-column: 2; grid-row: 1; font-size: 12px; }
+.views.split .chart-track { grid-column: 1 / -1; grid-row: 2; height: 12px; }
+.views.split .chart-bar { top: 1px; height: 10px; }
+.views.split .chart-axis { top: -2px; bottom: -2px; }
+@media (max-width: 999px) { .seg-both { display: none; } }
 
 /* ─── Store link / unavailable ───────────────────────────────────────────── */
 .store-link {
@@ -593,7 +600,6 @@ footer a { color: var(--accent); text-decoration: none; }
   .hide-mobile   { display: none !important; }
   .hide-mobile-s { display: none !important; }  /* rank col on very small */
   .price-cell { min-width: 110px; }
-  .tax-note { display: inline-block; margin: 3px 0 0; white-space: normal; }
   /* Narrow screens: fixed columns so the table never scrolls sideways */
   table { table-layout: fixed; }
   .col-rank { width: 44px; }
@@ -608,12 +614,8 @@ footer a { color: var(--accent); text-decoration: none; }
   .country-name { overflow-wrap: anywhere; }
   .price-cell { overflow-wrap: anywhere; }
   .badge-cheap { margin-left: 0; display: table; margin-top: 2px; }
-  .price-conv { display: block; }
   .prefs-row .field { flex: 1 1 140px; }
   .prefs-row .sort-select { width: 100%; }
-  .tax-rates { flex: 1 1 100%; }
-  .tax-rates .field { flex: 1 1 0; }
-  .rate-input { width: 100%; }
   .view-toggle { margin-left: 0; }
   .summary-actions { width: 100%; }
   .summary-actions .action-btn { flex: 1; }
@@ -724,31 +726,14 @@ footer a { color: var(--accent); text-decoration: none; }
       <span class="field-label">Show prices in</span>
       <select class="sort-select" id="currencySelect"></select>
     </label>
-    <label class="field">
-      <span class="field-label">Tax</span>
-      <select class="sort-select" id="taxSelect">
-        <option value="incl">Including tax (estimated)</option>
-        <option value="listed">As listed</option>
-        <option value="excl">Before tax (approx.)</option>
-      </select>
-    </label>
-    <div class="tax-rates" id="taxRates">
-      <label class="field">
-        <span class="field-label">US sales tax %</span>
-        <input class="rate-input" id="usTaxInput" type="number" min="0" max="30" step="0.1" inputmode="decimal" />
-      </label>
-      <label class="field">
-        <span class="field-label">Canada tax %</span>
-        <input class="rate-input" id="caTaxInput" type="number" min="0" max="30" step="0.1" inputmode="decimal" />
-      </label>
-    </div>
   </div>
 
   <!-- Row 2 — what is shown -->
   <div class="control-row">
     <div class="seg" id="regionChips" role="group" aria-label="Region"></div>
     <div class="seg view-toggle" id="viewToggle" role="group" aria-label="View">
-      <button type="button" class="seg-btn" data-view="table" aria-pressed="true">Table</button>
+      <button type="button" class="seg-btn seg-both" data-view="both" aria-pressed="true">Side by side</button>
+      <button type="button" class="seg-btn" data-view="table" aria-pressed="false">Table</button>
       <button type="button" class="seg-btn" data-view="chart" aria-pressed="false">Chart</button>
     </div>
   </div>
@@ -769,8 +754,10 @@ footer a { color: var(--accent); text-decoration: none; }
 </div>
 
 <!-- Results -->
-<div id="results"></div>
-<div id="chartView" style="display:none"></div>
+<div id="views" class="views">
+  <div id="results"></div>
+  <div id="chartView" style="display:none"></div>
+</div>
 
 <!-- Footer -->
 <footer>
@@ -787,76 +774,65 @@ footer a { color: var(--accent); text-decoration: none; }
 
   // ── Reference data ───────────────────────────────────────────────────────
   // Country names must match the API's COUNTRIES table exactly.
-  // tax.t: "incl"   = listed price already includes VAT/GST at tax.r percent
-  //        "excl"   = listed price excludes sales tax (added at checkout)
-  //        "none"   = no general sales tax
-  //        "varies" = taxes are included but there is no single retail rate
-  // Rates checked October 2026. Vietnam's 8% is a temporary cut (standard 10%)
-  // scheduled to end 31 Dec 2026.
   const AM = "Americas", EU = "Europe", AP = "Asia Pacific", ME = "Middle East & Africa";
   const COUNTRY_INFO = {
-    "United States":        { cc: "US", region: AM, cur: "USD", tax: { t: "excl", name: "sales tax" } },
-    "Canada":               { cc: "CA", region: AM, cur: "CAD", tax: { t: "excl", name: "GST/HST" } },
-    "Mexico":               { cc: "MX", region: AM, cur: "MXN", tax: { t: "incl", r: 16,  name: "VAT" } },
-    "Brazil":               { cc: "BR", region: AM, cur: "BRL", tax: { t: "varies" } },
-    "Chile":                { cc: "CL", region: AM, cur: "CLP", tax: { t: "incl", r: 19,  name: "VAT" } },
-    "Colombia":             { cc: "CO", region: AM, cur: "COP", tax: { t: "incl", r: 19,  name: "VAT" } },
+    "United States":        { cc: "US", region: AM, cur: "USD" },
+    "Canada":               { cc: "CA", region: AM, cur: "CAD" },
+    "Mexico":               { cc: "MX", region: AM, cur: "MXN" },
+    "Brazil":               { cc: "BR", region: AM, cur: "BRL" },
+    "Chile":                { cc: "CL", region: AM, cur: "CLP" },
+    "Colombia":             { cc: "CO", region: AM, cur: "COP" },
 
-    "United Kingdom":       { cc: "GB", region: EU, cur: "GBP", tax: { t: "incl", r: 20,  name: "VAT" } },
-    "Germany":              { cc: "DE", region: EU, cur: "EUR", tax: { t: "incl", r: 19,  name: "VAT" } },
-    "France":               { cc: "FR", region: EU, cur: "EUR", tax: { t: "incl", r: 20,  name: "VAT" } },
-    "Netherlands":          { cc: "NL", region: EU, cur: "EUR", tax: { t: "incl", r: 21,  name: "VAT" } },
-    "Spain":                { cc: "ES", region: EU, cur: "EUR", tax: { t: "incl", r: 21,  name: "VAT" } },
-    "Italy":                { cc: "IT", region: EU, cur: "EUR", tax: { t: "incl", r: 22,  name: "VAT" } },
-    "Austria":              { cc: "AT", region: EU, cur: "EUR", tax: { t: "incl", r: 20,  name: "VAT" } },
-    "Ireland":              { cc: "IE", region: EU, cur: "EUR", tax: { t: "incl", r: 23,  name: "VAT" } },
-    "Portugal":             { cc: "PT", region: EU, cur: "EUR", tax: { t: "incl", r: 23,  name: "VAT" } },
-    "Sweden":               { cc: "SE", region: EU, cur: "SEK", tax: { t: "incl", r: 25,  name: "VAT" } },
-    "Norway":               { cc: "NO", region: EU, cur: "NOK", tax: { t: "incl", r: 25,  name: "VAT" } },
-    "Denmark":              { cc: "DK", region: EU, cur: "DKK", tax: { t: "incl", r: 25,  name: "VAT" } },
-    "Poland":               { cc: "PL", region: EU, cur: "PLN", tax: { t: "incl", r: 23,  name: "VAT" } },
-    "Turkey":               { cc: "TR", region: EU, cur: "TRY", tax: { t: "incl", r: 20,  name: "VAT" } },
-    "Czech Republic":       { cc: "CZ", region: EU, cur: "CZK", tax: { t: "incl", r: 21,  name: "VAT" } },
-    "Hungary":              { cc: "HU", region: EU, cur: "HUF", tax: { t: "incl", r: 27,  name: "VAT" } },
-    "Romania":              { cc: "RO", region: EU, cur: "RON", tax: { t: "incl", r: 21,  name: "VAT" } },
-    "Finland":              { cc: "FI", region: EU, cur: "EUR", tax: { t: "incl", r: 25.5, name: "VAT" } },
-    "Belgium":              { cc: "BE", region: EU, cur: "EUR", tax: { t: "incl", r: 21,  name: "VAT" } },
-    "Luxembourg":           { cc: "LU", region: EU, cur: "EUR", tax: { t: "incl", r: 17,  name: "VAT" } },
-    "Greece":               { cc: "GR", region: EU, cur: "EUR", tax: { t: "incl", r: 24,  name: "VAT" } },
-    "Switzerland":          { cc: "CH", region: EU, cur: "CHF", tax: { t: "incl", r: 8.1, name: "VAT" } },
+    "United Kingdom":       { cc: "GB", region: EU, cur: "GBP" },
+    "Germany":              { cc: "DE", region: EU, cur: "EUR" },
+    "France":               { cc: "FR", region: EU, cur: "EUR" },
+    "Netherlands":          { cc: "NL", region: EU, cur: "EUR" },
+    "Spain":                { cc: "ES", region: EU, cur: "EUR" },
+    "Italy":                { cc: "IT", region: EU, cur: "EUR" },
+    "Austria":              { cc: "AT", region: EU, cur: "EUR" },
+    "Ireland":              { cc: "IE", region: EU, cur: "EUR" },
+    "Portugal":             { cc: "PT", region: EU, cur: "EUR" },
+    "Sweden":               { cc: "SE", region: EU, cur: "SEK" },
+    "Norway":               { cc: "NO", region: EU, cur: "NOK" },
+    "Denmark":              { cc: "DK", region: EU, cur: "DKK" },
+    "Poland":               { cc: "PL", region: EU, cur: "PLN" },
+    "Turkey":               { cc: "TR", region: EU, cur: "TRY" },
+    "Czech Republic":       { cc: "CZ", region: EU, cur: "CZK" },
+    "Hungary":              { cc: "HU", region: EU, cur: "HUF" },
+    "Romania":              { cc: "RO", region: EU, cur: "RON" },
+    "Finland":              { cc: "FI", region: EU, cur: "EUR" },
+    "Belgium":              { cc: "BE", region: EU, cur: "EUR" },
+    "Luxembourg":           { cc: "LU", region: EU, cur: "EUR" },
+    "Greece":               { cc: "GR", region: EU, cur: "EUR" },
+    "Switzerland":          { cc: "CH", region: EU, cur: "CHF" },
 
-    "Japan":                { cc: "JP", region: AP, cur: "JPY", tax: { t: "incl", r: 10,  name: "consumption tax" } },
-    "South Korea":          { cc: "KR", region: AP, cur: "KRW", tax: { t: "incl", r: 10,  name: "VAT" } },
-    "Hong Kong":            { cc: "HK", region: AP, cur: "HKD", tax: { t: "none" } },
-    "Taiwan":               { cc: "TW", region: AP, cur: "TWD", tax: { t: "incl", r: 5,   name: "VAT" } },
-    "China":                { cc: "CN", region: AP, cur: "CNY", tax: { t: "incl", r: 13,  name: "VAT" } },
-    "Philippines":          { cc: "PH", region: AP, cur: "PHP", tax: { t: "incl", r: 12,  name: "VAT" } },
-    "Thailand":             { cc: "TH", region: AP, cur: "THB", tax: { t: "incl", r: 7,   name: "VAT" } },
-    "India":                { cc: "IN", region: AP, cur: "INR", tax: { t: "incl", r: 18,  name: "GST" } },
-    "Singapore":            { cc: "SG", region: AP, cur: "SGD", tax: { t: "incl", r: 9,   name: "GST" } },
-    "Malaysia":             { cc: "MY", region: AP, cur: "MYR", tax: { t: "varies" } },
-    "Australia":            { cc: "AU", region: AP, cur: "AUD", tax: { t: "incl", r: 10,  name: "GST" } },
-    "New Zealand":          { cc: "NZ", region: AP, cur: "NZD", tax: { t: "incl", r: 15,  name: "GST" } },
-    "Vietnam":              { cc: "VN", region: AP, cur: "VND", tax: { t: "incl", r: 8,   name: "VAT" } },
-    "Indonesia":            { cc: "ID", region: AP, cur: "IDR", tax: { t: "incl", r: 11,  name: "VAT" } },
+    "Japan":                { cc: "JP", region: AP, cur: "JPY" },
+    "South Korea":          { cc: "KR", region: AP, cur: "KRW" },
+    "Hong Kong":            { cc: "HK", region: AP, cur: "HKD" },
+    "Taiwan":               { cc: "TW", region: AP, cur: "TWD" },
+    "China":                { cc: "CN", region: AP, cur: "CNY" },
+    "Philippines":          { cc: "PH", region: AP, cur: "PHP" },
+    "Thailand":             { cc: "TH", region: AP, cur: "THB" },
+    "India":                { cc: "IN", region: AP, cur: "INR" },
+    "Singapore":            { cc: "SG", region: AP, cur: "SGD" },
+    "Malaysia":             { cc: "MY", region: AP, cur: "MYR" },
+    "Australia":            { cc: "AU", region: AP, cur: "AUD" },
+    "New Zealand":          { cc: "NZ", region: AP, cur: "NZD" },
+    "Vietnam":              { cc: "VN", region: AP, cur: "VND" },
+    "Indonesia":            { cc: "ID", region: AP, cur: "IDR" },
 
-    "United Arab Emirates": { cc: "AE", region: ME, cur: "AED", tax: { t: "incl", r: 5,   name: "VAT" } },
-    "Saudi Arabia":         { cc: "SA", region: ME, cur: "SAR", tax: { t: "incl", r: 15,  name: "VAT" } },
-    "Israel":               { cc: "IL", region: ME, cur: "ILS", tax: { t: "incl", r: 18,  name: "VAT" } },
-    "South Africa":         { cc: "ZA", region: ME, cur: "ZAR", tax: { t: "incl", r: 15,  name: "VAT" } },
-    "Kuwait":               { cc: "KW", region: ME, cur: "KWD", tax: { t: "none" } },
-    "Qatar":                { cc: "QA", region: ME, cur: "QAR", tax: { t: "none" } },
-    "Bahrain":              { cc: "BH", region: ME, cur: "BHD", tax: { t: "incl", r: 10,  name: "VAT" } },
-    "Oman":                 { cc: "OM", region: ME, cur: "OMR", tax: { t: "incl", r: 5,   name: "VAT" } },
+    "United Arab Emirates": { cc: "AE", region: ME, cur: "AED" },
+    "Saudi Arabia":         { cc: "SA", region: ME, cur: "SAR" },
+    "Israel":               { cc: "IL", region: ME, cur: "ILS" },
+    "South Africa":         { cc: "ZA", region: ME, cur: "ZAR" },
+    "Kuwait":               { cc: "KW", region: ME, cur: "KWD" },
+    "Qatar":                { cc: "QA", region: ME, cur: "QAR" },
+    "Bahrain":              { cc: "BH", region: ME, cur: "BHD" },
+    "Oman":                 { cc: "OM", region: ME, cur: "OMR" },
   };
   const REGIONS = [AM, EU, AP, ME];
   const COUNTRY_NAMES = Object.keys(COUNTRY_INFO).sort((a, b) => a.localeCompare(b));
   const CURRENCIES = [...new Set(Object.values(COUNTRY_INFO).map(c => c.cur))].sort();
-
-  // Default estimates for the two stores that list prices before sales tax.
-  // US: population-weighted average combined state + local rate (Tax Foundation, July 2026).
-  // Canada: Ontario HST; provinces range from 5% to 15%.
-  const DEFAULT_TAX = { US: 7.5, CA: 13 };
 
   // Product names offered as you type (Apple's line-up, October 2026).
   const PRODUCTS = [
@@ -883,28 +859,21 @@ footer a { color: var(--accent); text-decoration: none; }
     return "United States";
   }
 
+  const VIEWS = ["both", "table", "chart"];
   function loadPrefs() {
-    const base = { home: guessHome(), currency: null, taxMode: "incl",
-                   usTax: DEFAULT_TAX.US, caTax: DEFAULT_TAX.CA,
-                   pinned: [], recent: [], view: "table" };
+    const base = { home: guessHome(), currency: null, pinned: [], recent: [], view: "both" };
     try {
       const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "null");
-      if (saved && typeof saved === "object") Object.assign(base, saved);
+      if (saved && typeof saved === "object")
+        Object.keys(base).forEach(k => { if (k in saved) base[k] = saved[k]; });
     } catch (_) { /* storage blocked or corrupt — defaults are fine */ }
     if (!COUNTRY_INFO[base.home]) base.home = guessHome();
     if (base.currency && !CURRENCIES.includes(base.currency)) base.currency = null;
-    if (!["incl", "listed", "excl"].includes(base.taxMode)) base.taxMode = "incl";
-    if (!["table", "chart"].includes(base.view)) base.view = "table";
-    base.usTax  = cleanRate(base.usTax, DEFAULT_TAX.US);
-    base.caTax  = cleanRate(base.caTax, DEFAULT_TAX.CA);
+    if (!VIEWS.includes(base.view)) base.view = "both";
     base.pinned = Array.isArray(base.pinned) ? base.pinned.filter(n => COUNTRY_INFO[n]) : [];
     base.recent = Array.isArray(base.recent)
       ? base.recent.filter(s => typeof s === "string" && s.trim()).slice(0, MAX_RECENT) : [];
     return base;
-  }
-  function cleanRate(v, fallback) {
-    const n = Number(v);
-    return Number.isFinite(n) && n >= 0 && n <= 30 ? n : fallback;
   }
   function savePrefs() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(prefs)); } catch (_) {}
@@ -921,6 +890,12 @@ footer a { color: var(--accent); text-decoration: none; }
   let fetchedAt      = null;   // J — timestamp when last fetch completed
   let serverRates    = null;   // currency → units per 1 USD, sent by the API
   let regionFilter   = "all";
+
+  // "Side by side" needs room; on narrower screens it falls back to the table.
+  const wideQuery = window.matchMedia("(min-width: 1000px)");
+  function effectiveView() {
+    return prefs.view === "both" && !wideQuery.matches ? "table" : prefs.view;
+  }
 
   // Persistent row elements — survive re-renders, cleared on new search
   const rowEls = new Map();
@@ -984,38 +959,6 @@ footer a { color: var(--accent); text-decoration: none; }
     return (a >= 10 ? Math.round(a) : Math.round(a * 10) / 10) + "%";
   }
 
-  // ── Tax ──────────────────────────────────────────────────────────────────
-  function userTaxRate(country) {
-    return country === "United States" ? prefs.usTax
-         : country === "Canada"        ? prefs.caTax : 0;
-  }
-  // USD price used for ranking, adjusted for the chosen tax mode.
-  function compareUsd(r) {
-    if (!r.available || !isNum(r.usdPrice)) return null;
-    const tax = info(r.country) ? info(r.country).tax : { t: "varies" };
-    if (prefs.taxMode === "incl" && tax.t === "excl")
-      return r.usdPrice * (1 + userTaxRate(r.country) / 100);
-    if (prefs.taxMode === "excl" && tax.t === "incl" && tax.r)
-      return r.usdPrice / (1 + tax.r / 100);
-    return r.usdPrice;
-  }
-  // Short note explaining how tax relates to the figure shown for this row.
-  function taxNote(country) {
-    const c = info(country);
-    if (!c) return "";
-    const tax = c.tax;
-    if (tax.t === "excl") {
-      return prefs.taxMode === "incl"
-        ? `+ est. ${userTaxRate(country)}% ${tax.name}`
-        : `excl. ${tax.name}`;
-    }
-    if (tax.t === "none")   return "no sales tax";
-    if (tax.t === "varies") return "taxes included";
-    return prefs.taxMode === "excl"
-      ? `${tax.r}% ${tax.name} removed`
-      : `incl. ${tax.r}% ${tax.name}`;
-  }
-
   // ── Derived view of the results ──────────────────────────────────────────
   // Ranks, cheapest/most expensive and the "home" reference always come from
   // the full result set, so they do not change with sorting or filtering.
@@ -1023,7 +966,7 @@ footer a { color: var(--accent); text-decoration: none; }
     const cur  = activeCurrency();
     const rate = rateFor(cur) || 1;
     const items = allResults.map(r => {
-      const usd = compareUsd(r);
+      const usd = r.available && isNum(r.usdPrice) ? r.usdPrice : null;   // price as listed
       return { r, c: info(r.country), usd, value: usd === null ? null : usd * rate,
                pinned: prefs.pinned.includes(r.country), isHome: r.country === prefs.home };
     });
@@ -1243,6 +1186,7 @@ footer a { color: var(--accent); text-decoration: none; }
     $("results").innerHTML       = "";
     $("chartView").innerHTML     = "";
     $("chartView").style.display = "none";
+    $("views").classList.remove("split");
     $("controls").style.display  = "none";
     $("progressWrap").style.display = "block";
     $("progressLabel").textContent  = `Resolving "${query}"…`;
@@ -1366,6 +1310,7 @@ footer a { color: var(--accent); text-decoration: none; }
     $("results").innerHTML = "";
     $("chartView").innerHTML = "";
     $("chartView").style.display = "none";
+    $("views").classList.remove("split");
     $("controls").style.display = "none";
     $("progressWrap").style.display = "none";
     $("summary").classList.remove("visible");
@@ -1420,12 +1365,7 @@ footer a { color: var(--accent); text-decoration: none; }
     animateStat("summaryMostExp",  line(view.priciest));
     animateStat("summaryHome", view.home ? line(view.home) : `${prefs.home} — no price`);
 
-    const taxText = {
-      incl:   `Ranked with an estimated ${prefs.usTax}% (US) and ${prefs.caTax}% (Canada) sales tax added, so every price includes tax.`,
-      listed: "Ranked by listed prices. US and Canada list prices before sales tax; most other stores include VAT or GST.",
-      excl:   "Ranked with VAT/GST removed where the rate is known. Approximate — shows Apple's underlying pricing, not a refund you are guaranteed.",
-    }[prefs.taxMode];
-    const notes = [taxText];
+    const notes = [];
     if (view.homeMissing && activeSource === null)
       notes.push(`No price for ${prefs.home}, so differences are shown against the cheapest country.`);
     if (view.cur !== view.wantedCur)
@@ -1482,7 +1422,7 @@ footer a { color: var(--accent); text-decoration: none; }
     if (!r.available) {
       priceHTML = `<td class="price-cell"><span class="unavail-badge">${esc(r.reason)}</span></td>`;
     } else {
-      // No "≈" line when it would just repeat the listed price (same currency, no tax change).
+      // No "≈" line when it would just repeat the listed price (same currency).
       const sameAsListed = priced && r.currency === view.cur && Math.abs(i.value - r.localPrice) < 0.005;
       const converted = !priced ? `<span class="price-conv">No exchange rate</span>`
         : sameAsListed ? ""
@@ -1490,7 +1430,7 @@ footer a { color: var(--accent); text-decoration: none; }
       priceHTML = `<td class="price-cell">
            <div class="price-local">${esc(r.localPriceFormatted)}${i.isCheapest
              ? '<span class="badge-cheap">Cheapest</span>' : ''}</div>
-           <div class="price-usd">${converted}<span class="tax-note">${esc(taxNote(r.country))}</span></div>
+           ${converted ? `<div class="price-usd">${converted}</div>` : ""}
            ${diffHTML}
            <div class="price-bar-wrap">
              <div class="price-bar-fill" style="width:${barPct}%"></div>
@@ -1513,7 +1453,7 @@ footer a { color: var(--accent); text-decoration: none; }
         <span class="tip">${esc(r.country)} · ${r.available ? esc(r.currency) : "N/A"}</span>
       </div></td>
       ${priceHTML}
-      <td class="hide-mobile">${r.available ? esc(r.currency) : "—"}</td>
+      <td class="hide-mobile hide-split">${r.available ? esc(r.currency) : "—"}</td>
       <td class="store-cell"><a class="store-link${r.available ? "" : " dim"}" href="${esc(href)}"
         target="_blank" rel="noopener" aria-label="${esc(`Apple store page for ${r.country}`)}"><span
         class="store-text">${esc(storeLabel)}</span> ↗</a></td>`;
@@ -1527,9 +1467,10 @@ footer a { color: var(--accent); text-decoration: none; }
     syncControls(view);
     renderTable(view, rows);
     renderChart(view, rows);
-    const chart = prefs.view === "chart";
-    $("results").style.display   = chart ? "none" : "";
-    $("chartView").style.display = chart ? "block" : "none";
+    const v = effectiveView();
+    $("views").classList.toggle("split", v === "both");
+    $("results").style.display   = v === "chart" ? "none" : "";
+    $("chartView").style.display = v === "table" ? "none" : "block";
   }
 
   function renderTable(view, rows) {
@@ -1553,7 +1494,7 @@ footer a { color: var(--accent); text-decoration: none; }
                 Country <span class="sort-icon">↕</span></th>
               <th onclick="setSort('usd-asc','usd-desc')">
                 Price <span class="sort-icon active">↕</span></th>
-              <th class="hide-mobile">Currency</th>
+              <th class="hide-mobile hide-split">Currency</th>
               <th class="col-store">Store</th>
             </tr></thead>
             <tbody></tbody>
@@ -1685,8 +1626,7 @@ footer a { color: var(--accent); text-decoration: none; }
           </div>
         </div>
         <div class="chart-rows" role="list" aria-label="Price difference by country">${bars}</div>
-        <p class="chart-foot">${items.length} countries · prices in ${esc(view.cur)} · ${esc(
-          { incl: "tax included (estimated for US and Canada)", listed: "as listed", excl: "tax removed where known" }[prefs.taxMode])}</p>
+        <p class="chart-foot">${items.length} countries · listed prices converted to ${esc(view.cur)}</p>
       </div>`;
   }
 
@@ -1701,9 +1641,6 @@ footer a { color: var(--accent); text-decoration: none; }
     fillSelect($("currencySelect"),
       [{ value: "", label: "Home currency" }, ...CURRENCIES.map(c => ({ value: c, label: c }))],
       prefs.currency || "");
-    $("taxSelect").value = prefs.taxMode;
-    $("usTaxInput").value = prefs.usTax;
-    $("caTaxInput").value = prefs.caTax;
     $("regionChips").innerHTML =
       [["all", "All regions"], ...REGIONS.map(r => [r, r])].map(([v, label]) =>
         `<button type="button" class="seg-btn" data-region="${esc(v)}"
@@ -1715,11 +1652,10 @@ footer a { color: var(--accent); text-decoration: none; }
     const home = info(prefs.home);
     const opt  = $("currencySelect").querySelector('option[value=""]');
     if (opt && home) opt.textContent = `${home.cur} (home)`;
-    $("taxRates").style.display = prefs.taxMode === "incl" ? "flex" : "none";
     document.querySelectorAll("#regionChips .seg-btn").forEach(b =>
       b.setAttribute("aria-pressed", String(b.dataset.region === regionFilter)));
     document.querySelectorAll("#viewToggle .seg-btn").forEach(b =>
-      b.setAttribute("aria-pressed", String(b.dataset.view === prefs.view)));
+      b.setAttribute("aria-pressed", String(b.dataset.view === effectiveView())));
   }
 
   function setSort(asc, desc) {
@@ -1750,7 +1686,7 @@ footer a { color: var(--accent); text-decoration: none; }
     const refName = view.home ? prefs.home : (view.ref ? view.ref.r.country : "");
     const round2  = n => (isNum(n) ? Math.round(n * 100) / 100 : "");
     const header = ["Rank", "Country", "Region", "Pinned", "Local currency", "Listed local price",
-      "Tax", `Compared price (${view.cur})`, "Listed price (USD)",
+      `Price (${view.cur})`, "Listed price (USD)",
       `Difference vs ${refName} (${view.cur})`, `Difference vs ${refName} (%)`, "Status", "Store URL"];
     const lines = rows.map(i => [
       i.value !== null ? i.rank : "",
@@ -1759,7 +1695,6 @@ footer a { color: var(--accent); text-decoration: none; }
       i.pinned ? "yes" : "",
       i.r.available ? i.r.currency : (i.c ? i.c.cur : ""),
       i.r.available ? i.r.localPrice : "",
-      i.r.available ? taxNote(i.r.country) : "",
       round2(i.value),
       i.r.available ? round2(i.r.usdPrice) : "",
       round2(i.diff),
@@ -1815,9 +1750,6 @@ footer a { color: var(--accent); text-decoration: none; }
 
   $("homeSelect").addEventListener("change", e => { prefs.home = e.target.value; savePrefs(); renderAll(); syncControls(null); });
   $("currencySelect").addEventListener("change", e => { prefs.currency = e.target.value || null; savePrefs(); renderAll(); });
-  $("taxSelect").addEventListener("change", e => { prefs.taxMode = e.target.value; savePrefs(); renderAll(); syncControls(null); });
-  $("usTaxInput").addEventListener("input", e => { prefs.usTax = cleanRate(e.target.value, prefs.usTax); savePrefs(); renderAll(); });
-  $("caTaxInput").addEventListener("input", e => { prefs.caTax = cleanRate(e.target.value, prefs.caTax); savePrefs(); renderAll(); });
 
   $("regionChips").addEventListener("click", e => {
     const b = e.target.closest("[data-region]");
@@ -1829,11 +1761,13 @@ footer a { color: var(--accent); text-decoration: none; }
   $("viewToggle").addEventListener("click", e => {
     const b = e.target.closest("[data-view]");
     if (!b) return;
+    if (!VIEWS.includes(b.dataset.view)) return;
     prefs.view = b.dataset.view;
     savePrefs();
     renderAll();
     syncControls(null);
   });
+  wideQuery.addEventListener("change", () => { renderAll(); syncControls(null); });
   $("results").addEventListener("click", e => {
     const b = e.target.closest("[data-pin]");
     if (b) togglePin(b.dataset.pin);

@@ -29,17 +29,13 @@ Backend API (Render): https://apple-products-global-price-tracker.onrender.com
 ## Features
 
 - **Home country and currency** — pick your home country and every price is also shown in your currency, with "€X cheaper / more than home" on each row. The home country is guessed from the browser language the first time and saved in the browser.
-- **Tax awareness** — each row says how tax relates to the listed price ("incl. 23% VAT", "no sales tax", "+ est. 7.5% sales tax"). Three ranking modes:
-  - *Including tax (estimated)* — default. Adds an estimated sales tax to the US and Canada, the two stores that list prices before tax. Both rates are editable (defaults: US 7.5% population-weighted average, Canada 13% Ontario HST).
-  - *As listed* — the prices exactly as Apple shows them.
-  - *Before tax (approx.)* — removes VAT/GST where a single rate is known.
 - **Shareable links** — the search lives in the URL (`?q=MacBook+Air`), works with back/forward, and there is a *Copy link* button.
 - **Recent searches and autocomplete** — the last 6 successful searches are kept in the browser; product names are suggested as you type.
 - **Region filters and pinned countries** — filter by Americas / Europe / Asia Pacific / Middle East & Africa; star a country to keep it at the top.
-- **Chart view** — a bar chart of each country's difference from your home price.
+- **Table and chart** — on wide screens the table and a bar chart of each country's difference from your home price sit side by side; a switch shows only the table or only the chart. Narrow screens show one at a time.
 - **CSV export** — downloads the rows currently shown.
 
-Tax rates, regions and the autocomplete product list are static tables at the top of the script in `docs/index.html` (`COUNTRY_INFO`, `DEFAULT_TAX`, `PRODUCTS`) — update them there when rates or Apple's line-up change. Preferences are stored in `localStorage` under `apgt:prefs:v1`.
+Regions and the autocomplete product list are static tables at the top of the script in `docs/index.html` (`COUNTRY_INFO`, `PRODUCTS`) — update them there when Apple's line-up changes. All prices are compared exactly as Apple lists them; note that the US and Canada list prices before sales tax while most other stores include VAT/GST. Preferences are stored in `localStorage` under `apgt:prefs:v1`.
 
 ---
 
