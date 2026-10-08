@@ -490,7 +490,6 @@ tbody tr.cheapest-row.pinned-row { background: rgba(26,158,92,.10); }
   background: rgba(0,113,227,.12); color: var(--accent);
   border-radius: 6px; padding: 2px 7px; font-size: 11px; font-weight: 600;
 }
-.badge-saving.home { color: var(--muted); }
 .pin-btn {
   background: none; border: none; cursor: pointer; padding: 2px 4px;
   font-size: 17px; line-height: 1; color: var(--muted);
@@ -505,7 +504,7 @@ tbody tr.cheapest-row.pinned-row { background: rgba(26,158,92,.10); }
 
 /* ─── Chart view ─────────────────────────────────────────────────────────── */
 .chart-card {
-  --below: #1f6fd0; --above: #d1493c; --same: #8e8e93;
+  --bar: #1f6fd0; --same: #8e8e93;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); box-shadow: var(--shadow); padding: 18px 20px;
 }
@@ -514,13 +513,6 @@ tbody tr.cheapest-row.pinned-row { background: rgba(26,158,92,.10); }
   align-items: baseline; justify-content: space-between; margin-bottom: 12px;
 }
 .chart-title { font-size: 15px; font-weight: 600; }
-.chart-legend { display: flex; gap: 16px; font-size: 12px; color: var(--muted); }
-.swatch {
-  display: inline-block; width: 10px; height: 10px; border-radius: 3px;
-  margin-right: 6px; vertical-align: -1px;
-}
-.swatch.below { background: var(--below); }
-.swatch.above { background: var(--above); }
 .chart-row {
   display: grid; grid-template-columns: 180px minmax(0, 1fr) 210px;
   gap: 12px; align-items: center; padding: 5px 8px; border-radius: 8px;
@@ -528,6 +520,7 @@ tbody tr.cheapest-row.pinned-row { background: rgba(26,158,92,.10); }
 .chart-row:hover { background: var(--surface2); }
 .chart-row.is-home { background: rgba(0,113,227,.07); }
 .chart-label { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 14px; font-weight: 500; }
+.chart-label .badge-home { flex-shrink: 0; }
 .chart-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chart-track { position: relative; height: 16px; }
 .chart-axis {
@@ -535,8 +528,7 @@ tbody tr.cheapest-row.pinned-row { background: rgba(26,158,92,.10); }
   background: var(--border);
 }
 .chart-bar { position: absolute; top: 2px; height: 12px; min-width: 2px; }
-.chart-bar.below { background: var(--below); border-radius: 4px 0 0 4px; }
-.chart-bar.above { background: var(--above); border-radius: 0 4px 4px 0; }
+.chart-bar.more { background: var(--bar); border-radius: 0 4px 4px 0; }
 .chart-bar.same  { background: var(--same); width: 3px !important; border-radius: 2px; }
 .chart-value { font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
 .chart-price { font-weight: 600; }
@@ -960,8 +952,9 @@ footer a { color: var(--accent); text-decoration: none; }
   }
 
   // ── Derived view of the results ──────────────────────────────────────────
-  // Ranks, cheapest/most expensive and the "home" reference always come from
-  // the full result set, so they do not change with sorting or filtering.
+  // Ranks, cheapest/most expensive and the differences always come from the
+  // full result set, so they do not change with sorting or filtering.
+  // Every difference is measured against the cheapest price.
   function buildView() {
     const cur  = activeCurrency();
     const rate = rateFor(cur) || 1;
@@ -976,19 +969,17 @@ footer a { color: var(--accent); text-decoration: none; }
     const cheapest = priced[0] || null;
     const priciest = priced[priced.length - 1] || null;
     const home     = priced.find(i => i.isHome) || null;
-    const ref      = home || cheapest;
 
     items.forEach(i => {
       i.isCheapest = !!cheapest && i.value !== null && i.value === cheapest.value;
-      if (ref && i.value !== null) {
-        i.diff    = i.value - ref.value;
-        i.diffPct = ref.value ? (i.diff / ref.value) * 100 : 0;
+      if (cheapest && i.value !== null) {
+        i.diff    = i.value - cheapest.value;
+        i.diffPct = cheapest.value ? (i.diff / cheapest.value) * 100 : 0;
       } else {
         i.diff = i.diffPct = null;
       }
     });
-    return { items, priced, cheapest, priciest, home, ref, cur,
-             homeMissing: !home, wantedCur: displayCurrency() };
+    return { items, priced, cheapest, priciest, home, cur, wantedCur: displayCurrency() };
   }
 
   function visibleItems(view) {
@@ -1020,18 +1011,11 @@ footer a { color: var(--accent); text-decoration: none; }
     return shown.sort((a, b) => group(a) - group(b) || cmp(a, b));
   }
 
+  // "€120 more than the cheapest (+13%)". The cheapest row carries its badge instead.
   function diffLabel(i, view) {
-    if (i.diff === null || !view.ref) return null;
-    if (!view.home) {                       // no home price → compare with the cheapest
-      if (i.isCheapest) return null;
-      return { cls: i.diffPct <= 10 ? "mid" : "pricey",
-               text: `+${fmtMoney(i.diff, view.cur)} vs cheapest (+${fmtPct(i.diffPct)})` };
-    }
-    if (i.isHome) return { cls: "home", text: "Your home price" };
-    if (Math.abs(i.diff) < 0.005) return { cls: "mid", text: `Same as ${prefs.home}` };
-    return i.diff < 0
-      ? { cls: "cheap",  text: `${fmtMoney(-i.diff, view.cur)} cheaper than ${prefs.home} (−${fmtPct(i.diffPct)})` }
-      : { cls: "pricey", text: `${fmtMoney(i.diff, view.cur)} more than ${prefs.home} (+${fmtPct(i.diffPct)})` };
+    if (i.diff === null || i.isCheapest) return null;
+    const cls = i.diffPct <= 10 ? "cheap" : i.diffPct <= 25 ? "mid" : "pricey";
+    return { cls, text: `${fmtMoney(i.diff, view.cur)} more than the cheapest (+${fmtPct(i.diffPct)})` };
   }
 
   // ── Clear input ──────────────────────────────────────────────────────────
@@ -1366,8 +1350,6 @@ footer a { color: var(--accent); text-decoration: none; }
     animateStat("summaryHome", view.home ? line(view.home) : `${prefs.home} — no price`);
 
     const notes = [];
-    if (view.homeMissing && activeSource === null)
-      notes.push(`No price for ${prefs.home}, so differences are shown against the cheapest country.`);
     if (view.cur !== view.wantedCur)
       notes.push(`No exchange rate for ${view.wantedCur} yet — showing USD.`);
     $("summaryNote").textContent = notes.join(" ");
@@ -1572,42 +1554,36 @@ footer a { color: var(--accent); text-decoration: none; }
     }
   }
 
-  // ── Chart view — each country against the reference price ────────────────
+  // ── Chart view — how much more each country costs than the cheapest ──────
   function renderChart(view, rows) {
     const el = $("chartView");
     const items = rows.filter(i => i.value !== null);
-    if (!items.length || !view.ref) {
+    if (!items.length || !view.cheapest) {
       el.innerHTML = `<p class="empty-note">No prices to chart for these filters.</p>`;
       return;
     }
-    const refName  = view.home ? prefs.home : view.ref.r.country;
-    const refWhat  = view.home ? `${refName} (home)` : `${refName} (cheapest)`;
-    const anyBelow = items.some(i => i.diffPct < -0.05);
-    const maxAbs   = Math.max(1, ...items.map(i => Math.abs(i.diffPct)));
-    // Bars grow from the reference line: left = cheaper, right = more expensive.
-    // If nothing is cheaper the line sits at the left edge to use the full width.
-    const origin   = anyBelow ? 50 : 0;
-    const span     = anyBelow ? 50 : 100;
+    const cheapestName = view.cheapest.r.country;
+    // Bars start at the cheapest price (zero difference) and grow with the extra cost.
+    const maxPct = Math.max(1, ...items.map(i => i.diffPct));
 
     const bars = items.map(i => {
-      const pct   = i.diffPct;
-      const width = Math.abs(pct) / maxAbs * span;
-      const below = pct < -0.05, above = pct > 0.05;
-      const cls   = below ? "below" : above ? "above" : "same";
-      const left  = below ? origin - width : origin;
-      const delta = !below && !above
-        ? (i.isHome ? "Home price" : "Same price")
-        : `${below ? "−" : "+"}${fmtMoney(Math.abs(i.diff), view.cur)} (${below ? "−" : "+"}${fmtPct(pct)})`;
-      const tip = `${i.r.country}: ${fmtMoney(i.value, view.cur)} — ${delta} vs ${refName}`;
+      const width = i.isCheapest ? 0 : (i.diffPct / maxPct) * 100;
+      const delta = i.isCheapest
+        ? "Cheapest"
+        : `+${fmtMoney(i.diff, view.cur)} (+${fmtPct(i.diffPct)})`;
+      const tip = i.isCheapest
+        ? `${i.r.country}: ${fmtMoney(i.value, view.cur)} — the cheapest`
+        : `${i.r.country}: ${fmtMoney(i.value, view.cur)} — ${delta} vs ${cheapestName}`;
       return `
         <div class="chart-row${i.isHome ? " is-home" : ""}" role="listitem" title="${esc(tip)}">
           <div class="chart-label">
             <span class="flag">${esc(i.r.flag)}</span>
             <span class="chart-name">${esc(i.r.country)}</span>
+            ${i.isHome ? '<span class="badge-home">Home</span>' : ""}
           </div>
           <div class="chart-track">
-            <span class="chart-axis" style="left:${origin}%"></span>
-            <span class="chart-bar ${cls}" style="left:${left}%;width:${width}%"></span>
+            <span class="chart-axis" style="left:0%"></span>
+            <span class="chart-bar ${i.isCheapest ? "same" : "more"}" style="left:0%;width:${width}%"></span>
           </div>
           <div class="chart-value">
             <span class="chart-price">${esc(fmtMoney(i.value, view.cur))}</span>
@@ -1619,13 +1595,9 @@ footer a { color: var(--accent); text-decoration: none; }
     el.innerHTML = `
       <div class="chart-card">
         <div class="chart-head">
-          <div class="chart-title">Price difference vs ${esc(refWhat)}</div>
-          <div class="chart-legend">
-            <span><i class="swatch below"></i>Cheaper</span>
-            <span><i class="swatch above"></i>More expensive</span>
-          </div>
+          <div class="chart-title">Extra cost vs the cheapest (${esc(cheapestName)})</div>
         </div>
-        <div class="chart-rows" role="list" aria-label="Price difference by country">${bars}</div>
+        <div class="chart-rows" role="list" aria-label="Extra cost over the cheapest price, by country">${bars}</div>
         <p class="chart-foot">${items.length} countries · listed prices converted to ${esc(view.cur)}</p>
       </div>`;
   }
@@ -1683,11 +1655,10 @@ footer a { color: var(--accent); text-decoration: none; }
   function buildCsv() {
     const view = buildView();
     const rows = visibleItems(view);
-    const refName = view.home ? prefs.home : (view.ref ? view.ref.r.country : "");
     const round2  = n => (isNum(n) ? Math.round(n * 100) / 100 : "");
     const header = ["Rank", "Country", "Region", "Pinned", "Local currency", "Listed local price",
       `Price (${view.cur})`, "Listed price (USD)",
-      `Difference vs ${refName} (${view.cur})`, `Difference vs ${refName} (%)`, "Status", "Store URL"];
+      `More than cheapest (${view.cur})`, "More than cheapest (%)", "Status", "Store URL"];
     const lines = rows.map(i => [
       i.value !== null ? i.rank : "",
       i.r.country,

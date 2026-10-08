@@ -28,11 +28,11 @@ Backend API (Render): https://apple-products-global-price-tracker.onrender.com
 
 ## Features
 
-- **Home country and currency** — pick your home country and every price is also shown in your currency, with "€X cheaper / more than home" on each row. The home country is guessed from the browser language the first time and saved in the browser.
+- **Home country and currency** — pick your home country and every price is also shown in your currency and your home row is marked. Each row says how much more it costs than the cheapest country. The home country is guessed from the browser language the first time and saved in the browser.
 - **Shareable links** — the search lives in the URL (`?q=MacBook+Air`), works with back/forward, and there is a *Copy link* button.
 - **Recent searches and autocomplete** — the last 6 successful searches are kept in the browser; product names are suggested as you type.
 - **Region filters and pinned countries** — filter by Americas / Europe / Asia Pacific / Middle East & Africa; star a country to keep it at the top.
-- **Table and chart** — on wide screens the table and a bar chart of each country's difference from your home price sit side by side; a switch shows only the table or only the chart. Narrow screens show one at a time.
+- **Table and chart** — on wide screens the table and a bar chart of how much more each country costs than the cheapest sit side by side; a switch shows only the table or only the chart. Narrow screens show one at a time.
 - **CSV export** — downloads the rows currently shown.
 
 Regions and the autocomplete product list are static tables at the top of the script in `docs/index.html` (`COUNTRY_INFO`, `PRODUCTS`) — update them there when Apple's line-up changes. All prices are compared exactly as Apple lists them; note that the US and Canada list prices before sales tax while most other stores include VAT/GST. Preferences are stored in `localStorage` under `apgt:prefs:v1`.
