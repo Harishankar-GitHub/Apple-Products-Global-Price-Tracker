@@ -5,11 +5,15 @@ fire simultaneously in a single thread (no ThreadPoolExecutor).
 """
 
 import re
+import os
+import hmac
 import json
+import math
 import time
 import asyncio
 import queue
 import threading
+from collections import deque
 from typing import Optional
 from urllib.parse import urlparse
 
@@ -30,7 +34,10 @@ _rates_fetched_at: float = 0.0
 RATES_TTL = 30 * 60
 
 # Cache 2 — Slug resolution  (no TTL — valid for process lifetime)
+#   Keyed by whatever was typed, so it is capped: the oldest entries are
+#   dropped once it holds SLUG_CACHE_MAX names.
 _slug_cache: dict[str, Optional[tuple[str, str]]] = {}
+SLUG_CACHE_MAX = 500
 
 # Cache 3 — Price results per slug
 #   Apple changes prices rarely, so a complete result set is kept for hours.
@@ -41,6 +48,201 @@ _slug_cache: dict[str, Optional[tuple[str, str]]] = {}
 _results_cache: dict[str, dict] = {}
 RESULTS_TTL       = 6 * 60 * 60   # complete result set  (6 hours)
 RESULTS_TTL_SHORT = 5 * 60        # incomplete result set (5 minutes)
+RESULTS_CACHE_MAX = 200           # most result sets held at once; oldest dropped first
+
+# ---------------------------------------------------------------------------
+# Abuse protection
+# ---------------------------------------------------------------------------
+# One uncached search makes 100+ requests to apple.com from this server, so an
+# unrestricted API can be used to hammer Apple (and get this server blocked)
+# or to fill the server's memory. Three limits apply to the price endpoints:
+#
+#   1. requests per visitor            — any price request, cached or not
+#   2. Apple look-ups per visitor      — requests that need apple.com
+#   3. Apple look-ups for everyone     — the same, added up across all visitors
+#
+# Limit 3 does not depend on telling visitors apart, so it holds even if
+# someone disguises their address. Each limit can be changed, or switched off
+# with 0, through an environment variable. Counters live in memory, like the
+# caches, and are per process.
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return max(0, int(os.environ.get(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+MAX_PRODUCT_LENGTH = 80           # characters accepted in ?product=
+
+RATE_REQUESTS_PER_MIN        = _env_int("RATE_LIMIT_REQUESTS_PER_MIN", 60)
+RATE_FETCHES_PER_10MIN       = _env_int("RATE_LIMIT_FETCHES_PER_10MIN", 20)
+RATE_GLOBAL_FETCHES_PER_10MIN = _env_int("RATE_LIMIT_GLOBAL_FETCHES_PER_10MIN", 60)
+
+# Secret that unlocks the detailed view of /api/cache/status (search terms and
+# product slugs). Unset → the detailed view is never available.
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
+
+
+class SlidingWindowLimiter:
+    """Allows at most `limit` events per `window` seconds for each key."""
+
+    MAX_KEYS = 10_000             # most keys remembered at once
+
+    def __init__(self, limit: int, window: int):
+        self.limit   = limit
+        self.window  = window
+        self._events: dict[str, deque] = {}
+        self._lock   = threading.Lock()
+        self._last_sweep = 0.0
+
+    def retry_after(self, key: str) -> int:
+        """0 if `key` may act now, otherwise the seconds until it may."""
+        if self.limit <= 0:
+            return 0
+        now = time.monotonic()
+        with self._lock:
+            return self._wait(key, now)
+
+    def record(self, key: str) -> None:
+        """Count one event for `key`."""
+        if self.limit <= 0:
+            return
+        now = time.monotonic()
+        with self._lock:
+            self._sweep(now)
+            self._events.setdefault(key, deque()).append(now)
+
+    def hit(self, key: str) -> int:
+        """Count one event if allowed and return 0; otherwise return the wait in
+        seconds. A refused event is not counted, so retrying does not extend the wait."""
+        if self.limit <= 0:
+            return 0
+        now = time.monotonic()
+        with self._lock:
+            wait = self._wait(key, now)
+            if wait == 0:
+                self._sweep(now)
+                self._events.setdefault(key, deque()).append(now)
+            return wait
+
+    def count(self, key: str) -> int:
+        """Events counted for `key` inside the current window."""
+        now = time.monotonic()
+        with self._lock:
+            self._wait(key, now)                    # drops expired events
+            return len(self._events.get(key, ()))
+
+    def tracked(self) -> int:
+        return len(self._events)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._events.clear()
+
+    # -- internals (call with the lock held) --
+    def _wait(self, key: str, now: float) -> int:
+        events = self._events.get(key)
+        if not events:
+            return 0
+        while events and now - events[0] >= self.window:
+            events.popleft()
+        if len(events) < self.limit:
+            return 0
+        return max(1, math.ceil(self.window - (now - events[0])))
+
+    def _sweep(self, now: float) -> None:
+        """Forget keys with nothing recent, so memory does not grow with every visitor."""
+        if now - self._last_sweep < 60 and len(self._events) < self.MAX_KEYS:
+            return
+        self._last_sweep = now
+        for key in [k for k, ev in self._events.items()
+                    if not ev or now - ev[-1] >= self.window]:
+            del self._events[key]
+        if len(self._events) >= self.MAX_KEYS:      # flood of distinct keys: drop the oldest half
+            for key in list(self._events)[: self.MAX_KEYS // 2]:
+                del self._events[key]
+
+
+_request_limiter      = SlidingWindowLimiter(RATE_REQUESTS_PER_MIN, 60)
+_fetch_limiter        = SlidingWindowLimiter(RATE_FETCHES_PER_10MIN, 600)
+_global_fetch_limiter = SlidingWindowLimiter(RATE_GLOBAL_FETCHES_PER_10MIN, 600)
+
+
+def _client_id() -> tuple[str, str]:
+    """
+    (address, where it came from) for the visitor making this request.
+    Render serves web services through Cloudflare, which sets CF-Connecting-IP
+    itself, so that header is preferred. X-Forwarded-For is a fallback: its
+    first entry is the visitor on Render, but a visitor can send their own.
+    """
+    cf = request.headers.get("CF-Connecting-IP", "").strip()
+    if cf:
+        return cf[:64], "CF-Connecting-IP"
+    forwarded = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    if forwarded:
+        return forwarded[:64], "X-Forwarded-For"
+    return (request.remote_addr or "unknown"), "connection"
+
+
+def _human_wait(seconds: int) -> str:
+    if seconds < 90:
+        return f"{seconds} second{'s' if seconds != 1 else ''}"
+    return f"{math.ceil(seconds / 60)} minutes"
+
+
+def _charge_fetch(client: str) -> Optional[tuple[str, int]]:
+    """
+    Call once for a request that needs apple.com. Returns None and counts it if
+    allowed; otherwise returns (message, seconds to wait) and counts nothing.
+    """
+    wait = _fetch_limiter.retry_after(client)
+    if wait:
+        return ("You have looked up a lot of products in a short time. "
+                f"Please try again in {_human_wait(wait)}.", wait)
+    wait = _global_fetch_limiter.retry_after("all")
+    if wait:
+        return ("The service is busy fetching prices for other visitors. "
+                f"Please try again in {_human_wait(wait)}.", wait)
+    _fetch_limiter.record(client)
+    _global_fetch_limiter.record("all")
+    return None
+
+
+def _too_fast(wait: int) -> tuple[str, int]:
+    return (f"Too many requests. Please try again in {_human_wait(wait)}.", wait)
+
+
+def _limit_payload(message: str, wait: int) -> dict:
+    return {"error": message, "rateLimited": True, "retryAfterSeconds": wait}
+
+
+def _limit_response(message: str, wait: int):
+    """HTTP 429 for the JSON endpoints."""
+    resp = jsonify(_limit_payload(message, wait))
+    resp.status_code = 429
+    resp.headers["Retry-After"] = str(wait)
+    return resp
+
+
+def _sse_error(payload: dict) -> Response:
+    """A stream that reports one error. EventSource cannot read the body of a
+    non-200 reply, so stream errors are sent as an event the page can show."""
+    def _gen():
+        yield f"event: error\ndata: {json.dumps(payload)}\n\n"
+    return Response(stream_with_context(_gen()), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+def _is_admin() -> bool:
+    """True when the request carries the configured ADMIN_TOKEN."""
+    if not ADMIN_TOKEN:
+        return False
+    supplied = request.headers.get("X-Admin-Token", "")
+    auth = request.headers.get("Authorization", "")
+    if not supplied and auth.lower().startswith("bearer "):
+        supplied = auth[7:].strip()
+    return bool(supplied) and hmac.compare_digest(supplied.encode(), ADMIN_TOKEN.encode())
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -297,7 +499,15 @@ def discover_slug(product_name: str) -> Optional[tuple[str, str]]:
         return _slug_cache[cache_key]               # Cache 2 hit
     result = asyncio.run(_async_resolve_slug(product_name))
     _slug_cache[cache_key] = result                 # store even if None
+    while len(_slug_cache) > SLUG_CACHE_MAX:        # drop the oldest names
+        _slug_cache.pop(next(iter(_slug_cache)), None)
     return result
+
+
+def slug_is_known(product_name: str) -> bool:
+    """True when resolving this name needs no request to apple.com."""
+    key = product_name.strip().lower()
+    return key in _slug_cache or key in SLUG_OVERRIDES
 
 
 # ---------------------------------------------------------------------------
@@ -499,7 +709,10 @@ def _cache_put(slug: str, payload: dict, complete: bool) -> int:
     `complete` is False when any country failed for a temporary reason."""
     has_price = any(r.get("available") for r in payload["results"])
     ttl = RESULTS_TTL if (complete and has_price) else RESULTS_TTL_SHORT
+    _results_cache.pop(slug, None)                  # re-insert so it counts as newest
     _results_cache[slug] = {"ts": time.monotonic(), "ttl": ttl, "payload": payload}
+    while len(_results_cache) > RESULTS_CACHE_MAX:  # drop the oldest result sets
+        _results_cache.pop(next(iter(_results_cache)), None)
     return ttl
 
 
@@ -543,6 +756,22 @@ def get_prices():
     product = request.args.get("product", "").strip()
     if not product:
         return jsonify({"error": "Missing ?product= parameter"}), 400
+    if len(product) > MAX_PRODUCT_LENGTH:
+        return jsonify({"error": f"Product name is too long (max {MAX_PRODUCT_LENGTH} characters)."}), 400
+
+    client, _ = _client_id()
+    wait = _request_limiter.hit(client)
+    if wait:
+        return _limit_response(*_too_fast(wait))
+
+    # Anything that needs apple.com is counted once per request: an unknown
+    # name (slug look-up) and/or a product whose prices are not cached.
+    charged = False
+    if not slug_is_known(product):
+        denied = _charge_fetch(client)
+        if denied:
+            return _limit_response(*denied)
+        charged = True
 
     result = discover_slug(product)
     if not result:
@@ -560,6 +789,11 @@ def get_prices():
         return jsonify({**payload, "product": product, "cached": True,
                         "ageSeconds": age, "expiresInSeconds": expires_in})
 
+    if not charged:
+        denied = _charge_fetch(client)
+        if denied:
+            return _limit_response(*denied)
+
     rates      = fetch_exchange_rates()              # Cache 1
     all_rows   = asyncio.run(_fetch_all_prices(slug, category, rates))
     failed     = [_pop_transient(r) for r in all_rows]   # strips the marker from every row
@@ -575,13 +809,27 @@ def get_prices_stream():
     """SSE endpoint — results stream back as each country completes."""
     product = request.args.get("product", "").strip()
     if not product:
-        def _err():
-            yield f"event: error\ndata: {json.dumps({'error': 'Missing ?product= parameter'})}\n\n"
-        return Response(stream_with_context(_err()), mimetype="text/event-stream")
+        return _sse_error({"error": "Missing ?product= parameter"})
+    if len(product) > MAX_PRODUCT_LENGTH:
+        return _sse_error({"error": f"Product name is too long (max {MAX_PRODUCT_LENGTH} characters)."})
+
+    client, _ = _client_id()
+    wait = _request_limiter.hit(client)
+    if wait:
+        return _sse_error(_limit_payload(*_too_fast(wait)))
 
     def generate():
         # Tell the UI we're working before the (potentially slow) slug resolution
         yield f"event: searching\ndata: {json.dumps({'product': product})}\n\n"
+
+        # Anything that needs apple.com is counted once per request (see get_prices).
+        charged = False
+        if not slug_is_known(product):
+            denied = _charge_fetch(client)
+            if denied:
+                yield f"event: error\ndata: {json.dumps(_limit_payload(*denied))}\n\n"
+                return
+            charged = True
 
         result = discover_slug(product)             # Cache 2 — instant on repeat
         if not result:
@@ -606,6 +854,12 @@ def get_prices_stream():
                 yield f"event: result\ndata: {json.dumps(row)}\n\n"
             yield f"event: done\ndata: {json.dumps({'product': product, 'cached': True})}\n\n"
             return
+
+        if not charged:
+            denied = _charge_fetch(client)
+            if denied:
+                yield f"event: error\ndata: {json.dumps(_limit_payload(*denied))}\n\n"
+                return
 
         rates    = fetch_exchange_rates()            # Cache 1
 
@@ -658,8 +912,19 @@ def health():
 
 @app.route("/api/cache/status")
 def cache_status():
-    now = time.monotonic()
-    return jsonify({
+    """
+    Cache and rate-limit state. The public view has totals only. What people
+    searched for (slug-cache keys, cached product slugs) is shown only to a
+    request carrying ADMIN_TOKEN in an `X-Admin-Token` or
+    `Authorization: Bearer` header.
+    """
+    client, source = _client_id()
+    wait = _request_limiter.hit(client)
+    if wait:
+        return _limit_response(*_too_fast(wait))
+
+    now  = time.monotonic()
+    body = {
         "exchange_rates": {
             "cached":      bool(_rates_cache),
             "age_seconds": round(now - _rates_fetched_at) if _rates_cache else None,
@@ -668,22 +933,39 @@ def cache_status():
         },
         "slug_cache": {
             "entries": len(_slug_cache),
-            "keys":    list(_slug_cache.keys()),
+            "max_entries": SLUG_CACHE_MAX,
         },
         "results_cache": {
             "entries": len(_results_cache),
+            "max_entries": RESULTS_CACHE_MAX,
             "ttl_seconds":            RESULTS_TTL,
             "ttl_seconds_incomplete": RESULTS_TTL_SHORT,
-            "slugs": {
-                slug: {
-                    "age_seconds": round(now - v["ts"]),
-                    "ttl_seconds": v.get("ttl", RESULTS_TTL_SHORT),
-                    "expires_in":  max(0, round(v.get("ttl", RESULTS_TTL_SHORT) - (now - v["ts"]))),
-                }
-                for slug, v in list(_results_cache.items())
-            },
         },
-    })
+        "rate_limits": {
+            "requests_per_minute":             _request_limiter.limit,
+            "apple_lookups_per_10_minutes":    _fetch_limiter.limit,
+            "apple_lookups_per_10_minutes_all_visitors": _global_fetch_limiter.limit,
+            "apple_lookups_used_all_visitors": _global_fetch_limiter.count("all"),
+            "visitors_tracked": _request_limiter.tracked(),
+        },
+        "details": "shown",
+    }
+    if not _is_admin():
+        body["details"] = "hidden — send the admin token to see search terms and product slugs"
+        return jsonify(body)
+
+    body["slug_cache"]["keys"] = list(_slug_cache.keys())
+    body["results_cache"]["slugs"] = {
+        slug: {
+            "age_seconds": round(now - v["ts"]),
+            "ttl_seconds": v.get("ttl", RESULTS_TTL_SHORT),
+            "expires_in":  max(0, round(v.get("ttl", RESULTS_TTL_SHORT) - (now - v["ts"]))),
+        }
+        for slug, v in list(_results_cache.items())
+    }
+    # How this server identified you — use it to confirm visitors are told apart correctly.
+    body["you"] = {"address": client, "identified_by": source}
+    return jsonify(body)
 
 
 @app.route("/")

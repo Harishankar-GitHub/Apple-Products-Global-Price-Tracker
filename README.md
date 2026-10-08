@@ -117,7 +117,7 @@ Server-Sent Events stream. Pushes each country result as it completes — the br
 | `meta` | After slug is resolved | `{ product, slug, category, total, rates, cached?, ageSeconds?, expiresInSeconds? }` — `rates` maps each listed currency to units per 1 USD; on a cache hit `ageSeconds` is how long ago the prices were fetched from Apple and `expiresInSeconds` is when they will be fetched again |
 | `result` | As each country finishes | Full country price object (see below) |
 | `done` | All countries complete | `{ product, cached? }` |
-| `error` | Bad product name / API error | `{ error: "message" }` |
+| `error` | Bad product name / API error / rate limit | `{ error: "message" }`, plus `rateLimited: true` and `retryAfterSeconds` when a limit was hit |
 
 **Example (curl):**
 ```bash
@@ -176,30 +176,53 @@ Returns `{"status": "ok"}` — for uptime monitoring.
 
 ### `GET /api/cache/status`
 
-Returns current state of all three in-memory caches — useful for debugging on free-tier hosts.
+Returns the state of the three in-memory caches and the rate limits. The public view has totals only — it does not show what anyone searched for:
 
 ```json
 {
-  "exchange_rates": {
-    "cached": true,
-    "age_seconds": 142,
-    "ttl_seconds": 1800,
-    "expires_in": 1658
-  },
-  "slug_cache": {
-    "entries": 3,
-    "keys": ["macbook air", "iphone 17", "mac mini"]
-  },
-  "results_cache": {
-    "entries": 1,
-    "ttl_seconds": 21600,
-    "ttl_seconds_incomplete": 300,
-    "slugs": {
-      "macbook-air": { "age_seconds": 87, "ttl_seconds": 21600, "expires_in": 21513 }
-    }
+  "details": "hidden — send the admin token to see search terms and product slugs",
+  "exchange_rates": { "cached": true, "age_seconds": 142, "ttl_seconds": 1800, "expires_in": 1658 },
+  "slug_cache": { "entries": 3, "max_entries": 500 },
+  "results_cache": { "entries": 1, "max_entries": 200, "ttl_seconds": 21600, "ttl_seconds_incomplete": 300 },
+  "rate_limits": {
+    "requests_per_minute": 60,
+    "apple_lookups_per_10_minutes": 20,
+    "apple_lookups_per_10_minutes_all_visitors": 60,
+    "apple_lookups_used_all_visitors": 4,
+    "visitors_tracked": 2
   }
 }
 ```
+
+To see the search terms (`slug_cache.keys`), the cached products (`results_cache.slugs`) and how the server identified you (`you`), set an `ADMIN_TOKEN` environment variable on the server and send it with the request:
+
+```bash
+curl -H "X-Admin-Token: <your token>" https://apple-products-global-price-tracker.onrender.com/api/cache/status
+```
+
+`Authorization: Bearer <your token>` works too. If `ADMIN_TOKEN` is not set, the detailed view is never available.
+
+---
+
+## Abuse protection
+
+One uncached search makes 100+ requests to apple.com from the server, so the price endpoints are rate limited:
+
+| Limit | Default | Environment variable |
+|-------|---------|----------------------|
+| Requests per visitor (cached or not) | 60 per minute | `RATE_LIMIT_REQUESTS_PER_MIN` |
+| Apple look-ups per visitor (a new product, or a name not seen before) | 20 per 10 minutes | `RATE_LIMIT_FETCHES_PER_10MIN` |
+| Apple look-ups for all visitors together | 60 per 10 minutes | `RATE_LIMIT_GLOBAL_FETCHES_PER_10MIN` |
+
+Set a variable to `0` to switch that limit off. Cached results never count as a look-up, so a visitor who is over the look-up limit can still open products that are already cached.
+
+- `/api/prices` answers `429` with `{ "error", "rateLimited": true, "retryAfterSeconds" }` and a `Retry-After` header.
+- `/api/prices/stream` sends an `error` event with the same payload, which the page shows as a message.
+- `/api/health` is not limited (the page calls it on every load).
+
+Visitors are told apart by the `CF-Connecting-IP` header (set by Cloudflare, which fronts Render), falling back to the first `X-Forwarded-For` address, then the connection address. The all-visitors limit does not depend on this, so it holds even if someone disguises their address. Counters are in memory, per process, and reset on restart.
+
+Also capped: product names longer than 80 characters are rejected, the slug cache holds at most 500 names and the results cache at most 200 products (oldest dropped first).
 
 ---
 
