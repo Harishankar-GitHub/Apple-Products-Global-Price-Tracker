@@ -313,6 +313,15 @@ header {
 .summary-note {
   margin: 8px 4px 0; font-size: 12px; line-height: 1.5; color: var(--muted);
 }
+/* Shown when the prices are for a different product than the one typed */
+.match-note {
+  margin: 10px 0 0; padding: 10px 14px; font-size: 14px; line-height: 1.45;
+  color: var(--text); background: rgba(0,113,227,.09);
+  border: 1px solid rgba(0,113,227,.28); border-left: 4px solid var(--accent);
+  border-radius: var(--radius-sm);
+}
+.match-note[hidden] { display: none; }
+.match-note strong { font-weight: 600; }
 
 /* stat flip animation */
 .stat-val { display: inline-block; }
@@ -718,6 +727,7 @@ footer a { color: var(--accent); text-decoration: none; }
       <button type="button" class="action-btn" id="exportCsvBtn" onclick="exportCsv()">⬇ Export CSV</button>
     </div>
   </div>
+  <p class="match-note" id="matchNote" role="status" hidden></p>
   <p class="summary-note" id="summaryNote" aria-live="polite"></p>
 </div>
 
@@ -889,7 +899,8 @@ footer a { color: var(--accent); text-decoration: none; }
 
   // ── State ────────────────────────────────────────────────────────────────
   let allResults     = [];
-  let productName    = "";
+  let productName    = "";    // what was typed
+  let productSlug    = "";    // Apple's identifier for the product that was priced
   let totalCountries = 0;
   let receivedCount  = 0;
   let activeSource   = null;
@@ -1261,6 +1272,8 @@ footer a { color: var(--accent); text-decoration: none; }
     $("summaryMostExp").textContent = "—";
     $("summaryHome").textContent    = "—";
     $("summaryNote").textContent    = "";
+    productSlug = "";
+    showMatchNote(null);
     const sumEl = $("summary");
     sumEl.style.display = "block";
     // small tick so display:block is painted before we add .visible
@@ -1287,8 +1300,21 @@ footer a { color: var(--accent); text-decoration: none; }
       const meta = JSON.parse(e.data);
       totalCountries = meta.total;
       productName    = meta.product;
+      productSlug    = typeof meta.slug === "string" ? meta.slug : "";
       if (meta.rates && typeof meta.rates === "object") serverRates = meta.rates;
-      $("progressLabel").textContent = `Fetching prices for "${meta.product}"…`;
+
+      // The API says when it priced a different product than the one typed
+      // (an older model mapped to the current one, a long name cut down…).
+      // Then the heading names the product actually shown and a note explains.
+      const other = meta.substituted === true && typeof meta.matchedName === "string" && meta.matchedName.trim()
+        ? meta.matchedName.trim() : null;
+      const shown = other || meta.product;
+      if (other) {
+        $("summaryProduct").textContent = `🍎 ${other}`;
+        document.title = `${other} — ${BASE_TITLE}`;
+      }
+      showMatchNote(other, query);
+      $("progressLabel").textContent = `Fetching prices for "${shown}"…`;
       $("controls").style.display = "block";
       rememberSearch(query);            // only searches Apple recognised are kept
 
@@ -1374,6 +1400,16 @@ footer a { color: var(--accent); text-decoration: none; }
     });
   }
 
+  // "Showing prices for X — the closest match found for "Y"." (hidden when name is null)
+  function showMatchNote(name, typed) {
+    const note = $("matchNote");
+    if (!name) { note.hidden = true; note.replaceChildren(); return; }
+    const strong = document.createElement("strong");
+    strong.textContent = name;               // textContent throughout: both values are untrusted text
+    note.replaceChildren("Showing prices for ", strong, ` — the closest match found for "${typed}".`);
+    note.hidden = false;
+  }
+
   // Back to the empty landing state (used by back/forward navigation).
   function resetToLanding() {
     if (activeSource) { activeSource.close(); activeSource = null; }
@@ -1394,6 +1430,8 @@ footer a { color: var(--accent); text-decoration: none; }
     $("progressWrap").style.display = "none";
     $("summary").classList.remove("visible");
     $("summary").style.display = "none";
+    productSlug = "";
+    showMatchNote(null);
   }
 
   // ── Skeleton (item 3) ─────────────────────────────────────────────────────
@@ -1773,7 +1811,8 @@ footer a { color: var(--accent); text-decoration: none; }
   }
   function exportCsv() {
     if (!allResults.length) return;
-    const slug = productName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "apple";
+    // Named after the product that was priced, which may differ from what was typed.
+    const slug = (productSlug || productName).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "apple";
     const blob = new Blob(["﻿" + buildCsv()], { type: "text/csv;charset=utf-8" }); // BOM for Excel
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);

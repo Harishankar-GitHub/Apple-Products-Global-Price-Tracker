@@ -34,6 +34,7 @@ Backend API (Render): https://apple-products-global-price-tracker.onrender.com
 - **Region filters and pinned countries** — filter by Americas / Europe / Asia Pacific / Middle East & Africa; star a country to keep it at the top.
 - **Table and chart** — on wide screens the table and a bar chart of how much more each country costs than the cheapest sit side by side; a switch shows only the table or only the chart. Narrow screens show one at a time.
 - **CSV export** — downloads the rows currently shown.
+- **Closest-match notice** — if the prices are for a different product than the one typed (for example a retired model mapped to the current one), the page says which product it is showing.
 
 Regions and the autocomplete product list are static tables at the top of the script in `docs/index.html` (`COUNTRY_INFO`, `PRODUCTS`) — update them there when Apple's line-up changes. All prices are compared exactly as Apple lists them; note that the US and Canada list prices before sales tax while most other stores include VAT/GST. Preferences are stored in `localStorage` under `apgt:prefs:v1`.
 
@@ -114,7 +115,7 @@ Server-Sent Events stream. Pushes each country result as it completes — the br
 | Event | When | Payload |
 |-------|------|---------|
 | `searching` | Immediately on request | `{ product }` |
-| `meta` | After slug is resolved | `{ product, slug, category, total, rates, cached?, ageSeconds?, expiresInSeconds? }` — `rates` maps each listed currency to units per 1 USD; on a cache hit `ageSeconds` is how long ago the prices were fetched from Apple and `expiresInSeconds` is when they will be fetched again |
+| `meta` | After slug is resolved | `{ product, slug, matchedName, substituted, category, total, rates, cached?, ageSeconds?, expiresInSeconds? }` — `rates` maps each listed currency to units per 1 USD; `matchedName` / `substituted` say which product was priced and whether it differs from the one asked for (see Slug Resolution); on a cache hit `ageSeconds` is how long ago the prices were fetched from Apple and `expiresInSeconds` is when they will be fetched again |
 | `result` | As each country finishes | Full country price object (see below) |
 | `done` | All countries complete | `{ product, cached? }` |
 | `error` | Bad product name / API error / rate limit | `{ error: "message" }`, plus `rateLimited: true` and `retryAfterSeconds` when a limit was hit |
@@ -135,6 +136,8 @@ Blocking JSON endpoint. Waits for all countries to finish, then returns the full
 {
   "product": "MacBook Air",
   "slug": "macbook-air",
+  "matchedName": "MacBook Air",
+  "substituted": false,
   "category": "mac",
   "ratesDate": "live",
   "rates": { "EUR": 0.92, "GBP": 0.78, "INR": 84.1 },
@@ -300,12 +303,23 @@ The page shows how old cached prices are ("⚡ cached · prices from 2 h 5 min a
 
 Apple's product URLs don't always match a simple `name → slug` conversion. The API resolves slugs in this order:
 
-1. **Override table** — known products with non-obvious slugs (e.g. `"apple watch ultra"` → `apple-watch-ultra-3`)
+1. **Override table** — known products with non-obvious slugs, including older models that should lead to the current one (e.g. `"apple watch ultra 2"` → `apple-watch-ultra-4`). An entry is used only while Apple still serves a page for its slug (the product page, or the US buy page). Apple redirects retired product pages to the line-up page, so a stale entry is skipped and the steps below run instead.
 2. **Direct probe** — try `apple.com/<slug>/` with redirect detection (rejects silent homepage redirects)
 3. **Suggestions API** — query Apple's autocomplete endpoint and verify the returned slug
 4. **Variations** — try `apple-<slug>`, truncated forms, numeric suffixes (`-2`, `-3`, etc.)
 
 If none resolve, the API returns a clear error — it will not silently return 50 rows of "Price not found".
+
+### When the result is not the product that was typed
+
+Steps 1, 3 and 4 can land on a different product than the one asked for: an older model mapped to the current one, a long name cut down to a page that exists, or a number added. The API reports what it priced in every response:
+
+- `matchedName` — the product priced, written as Apple writes it (`"Apple Watch Ultra 4"`)
+- `substituted` — `true` when that is not the product typed. Differences in case, spacing, hyphens or a leading "Apple" do not count.
+
+When `substituted` is true the page puts the matched name in the heading and shows a notice: *Showing prices for **Apple Watch Ultra 4** — the closest match found for "Apple Watch Ultra 2".* The exported CSV is named after the product priced.
+
+The same care applies per country: if a store redirects the product's page to a different page (Apple sends products a country does not sell to the line-up page), that country is reported as "Not available in this country" rather than given whatever price the other page shows.
 
 ---
 

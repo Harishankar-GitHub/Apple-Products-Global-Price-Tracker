@@ -328,13 +328,19 @@ COUNTRY_FLAGS: dict[str, str] = {
     "Bahrain": "🇧🇭", "Oman": "🇴🇲",
 }
 
+# Names that plain name → slug conversion gets wrong, including older models
+# that should lead to the one Apple sells now. Each entry is a hint, not a
+# fact: it is used only while Apple still serves a page for that slug (see
+# _override_is_live), so an entry that goes stale falls back to normal
+# discovery instead of pointing at a retired page. When the slug differs from
+# what was typed, the response says so (see match_info).
 SLUG_OVERRIDES: dict[str, tuple[str, str]] = {
     "iphone 16 pro":       ("iphone-16-pro",      "iphone"),
     "iphone 16":           ("iphone-16",           "iphone"),
     "iphone 17":           ("iphone-17",           "iphone"),
-    "apple watch ultra":   ("apple-watch-ultra-3", "watch"),
-    "apple watch ultra 3": ("apple-watch-ultra-3", "watch"),
-    "apple watch ultra 2": ("apple-watch-ultra-3", "watch"),
+    "apple watch ultra":   ("apple-watch-ultra-4", "watch"),
+    "apple watch ultra 3": ("apple-watch-ultra-4", "watch"),
+    "apple watch ultra 2": ("apple-watch-ultra-4", "watch"),
 }
 
 
@@ -408,6 +414,48 @@ def infer_category(slug: str) -> str:
     return s.split("-")[0]
 
 
+# How Apple writes the words that are not simply capitalised.
+_NAME_WORDS = {
+    "iphone": "iPhone", "ipad": "iPad", "imac": "iMac", "macbook": "MacBook",
+    "airpods": "AirPods", "airtag": "AirTag", "homepod": "HomePod",
+    "tv": "TV", "4k": "4K", "se": "SE", "xdr": "XDR", "mini": "mini",
+    "generation": "generation", "hermes": "Hermès",
+}
+
+
+def display_name(slug: str) -> str:
+    """'apple-watch-ultra-4' → 'Apple Watch Ultra 4', 'ipad-mini' → 'iPad mini'."""
+    words = []
+    for word in slug.lower().split("-"):
+        if not word:
+            continue
+        if word in _NAME_WORDS:
+            words.append(_NAME_WORDS[word])
+        elif word[0].isdigit():
+            words.append(word)                       # 17e, 2nd, 4
+        else:
+            words.append(word.capitalize())
+    return " ".join(words)
+
+
+def _name_key(text: str) -> str:
+    """Letters and digits only, without a leading 'apple', for comparing names."""
+    key = re.sub(r"[^a-z0-9]", "", text.lower())
+    return key[5:] if key.startswith("apple") and len(key) > 5 else key
+
+
+def match_info(product_name: str, slug: str) -> dict:
+    """
+    What was actually priced, for the response. `substituted` is True when the
+    product found is not the one typed — an older model mapped to the current
+    one, a longer name cut down to a page that exists, a number added — so the
+    page can say so instead of presenting it as an exact answer. Differences
+    in case, spacing, hyphens or a leading "Apple" do not count.
+    """
+    return {"matchedName": display_name(slug),
+            "substituted": _name_key(product_name) != _name_key(slug)}
+
+
 async def _async_probe(session: aiohttp.ClientSession, url: str) -> bool:
     """
     Returns True only if the final URL's first path segment matches the
@@ -425,17 +473,41 @@ async def _async_probe(session: aiohttp.ClientSession, url: str) -> bool:
     return False
 
 
+async def _async_page_is_for(session: aiohttp.ClientSession, url: str, slug: str) -> bool:
+    """True if `url` answers 200 and, after redirects, is still a page for `slug`."""
+    try:
+        async with session.get(url, timeout=aiohttp.ClientTimeout(total=12),
+                               allow_redirects=True) as r:
+            return r.status == 200 and slug in urlparse(str(r.url)).path
+    except Exception:
+        return False
+
+
+async def _override_is_live(session: aiohttp.ClientSession, slug: str, category: str) -> bool:
+    """
+    An override is used only while Apple still has a page for its slug: the
+    product page, or the US buy page for products that have no product page.
+    Apple redirects retired product pages to the line-up page, which fails both.
+    """
+    product_ok, shop_ok = await asyncio.gather(
+        _async_probe(session, f"https://www.apple.com/{slug}/"),
+        _async_page_is_for(session, build_shop_url("", category, slug), slug),
+    )
+    return product_ok or shop_ok
+
+
 async def _async_resolve_slug(product_name: str) -> Optional[tuple[str, str]]:
     """All apple.com probing runs concurrently inside one aiohttp session."""
-    override_key = product_name.strip().lower()
-    if override_key in SLUG_OVERRIDES:
-        return SLUG_OVERRIDES[override_key]
-
+    override  = SLUG_OVERRIDES.get(product_name.strip().lower())
     candidate = name_to_slug(product_name)
     category  = infer_category(candidate)
 
     async with aiohttp.ClientSession(headers=HEADERS,
                                      connector=_make_connector()) as session:
+        # 0. Known name: use its slug while Apple still serves it, else carry on below
+        if override and await _override_is_live(session, *override):
+            return override
+
         # 1. Direct probe + suggestions API call in parallel
         async def suggestions() -> Optional[tuple[str, str]]:
             try:
@@ -506,8 +578,7 @@ def discover_slug(product_name: str) -> Optional[tuple[str, str]]:
 
 def slug_is_known(product_name: str) -> bool:
     """True when resolving this name needs no request to apple.com."""
-    key = product_name.strip().lower()
-    return key in _slug_cache or key in SLUG_OVERRIDES
+    return product_name.strip().lower() in _slug_cache
 
 
 # ---------------------------------------------------------------------------
@@ -582,6 +653,11 @@ async def _fetch_price_async(
         try:
             async with session.get(url, timeout=timeout, allow_redirects=True) as r:
                 if r.status == 200:
+                    if slug not in urlparse(str(r.url)).path:
+                        # Redirected to a different page (Apple sends products a
+                        # country does not sell to the line-up page). A price
+                        # found there would belong to some other product.
+                        return None
                     html = await r.text()
                     return extract_low_price(html, min_price)
                 if r.status != 404:
@@ -600,7 +676,8 @@ async def _fetch_price_async(
         try:
             async with session.get(prod_url, timeout=aiohttp.ClientTimeout(total=10),
                                    allow_redirects=True) as r:
-                if r.status == 404:
+                redirected_away = r.status == 200 and slug not in urlparse(str(r.url)).path
+                if r.status == 404 or redirected_away:
                     return {"country": country, "flag": flag, "available": False,
                             "reason": "Not available in this country", "url": prod_url}
                 if r.status != 200:
@@ -786,8 +863,8 @@ def get_prices():
     if hit:                                          # Cache 3 hit
         payload, age, expires_in = hit
         payload = _with_current_rates(payload, fetch_exchange_rates())
-        return jsonify({**payload, "product": product, "cached": True,
-                        "ageSeconds": age, "expiresInSeconds": expires_in})
+        return jsonify({**payload, "product": product, **match_info(product, slug),
+                        "cached": True, "ageSeconds": age, "expiresInSeconds": expires_in})
 
     if not charged:
         denied = _charge_fetch(client)
@@ -800,7 +877,7 @@ def get_prices():
 
     payload = _build_payload(product, slug, category, rates, all_rows)
     ttl     = _cache_put(slug, payload, complete=not any(failed))
-    return jsonify({**payload, "cached": False,
+    return jsonify({**payload, **match_info(product, slug), "cached": False,
                     "ageSeconds": 0, "expiresInSeconds": ttl})
 
 
@@ -846,6 +923,7 @@ def get_prices_stream():
             payload, age, expires_in = hit
             payload = _with_current_rates(payload, fetch_exchange_rates())
             meta = {"product": product, "slug": slug, "category": category,
+                    **match_info(product, slug),
                     "total": len(payload["results"]), "cached": True,
                     "ageSeconds": age, "expiresInSeconds": expires_in,
                     "rates": payload.get("rates", {})}
@@ -863,7 +941,10 @@ def get_prices_stream():
 
         rates    = fetch_exchange_rates()            # Cache 1
 
-        yield f"event: meta\ndata: {json.dumps({'product': product, 'slug': slug, 'category': category, 'total': len(COUNTRIES), 'rates': rates_for_client(rates)})}\n\n"
+        meta = {"product": product, "slug": slug, "category": category,
+                **match_info(product, slug),
+                "total": len(COUNTRIES), "rates": rates_for_client(rates)}
+        yield f"event: meta\ndata: {json.dumps(meta)}\n\n"
 
         # ── Queue bridge ─────────────────────────────────────────────────────
         # A background thread runs the asyncio event loop and puts each row
