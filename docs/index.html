@@ -321,6 +321,8 @@ header {
   border-radius: var(--radius-sm);
 }
 .match-note[hidden] { display: none; }
+/* Search finished and no country returned a price */
+.no-prices strong { display: block; color: var(--text); font-size: 16px; font-weight: 600; margin-bottom: 6px; }
 .match-note strong { font-weight: 600; }
 
 /* stat flip animation */
@@ -901,6 +903,7 @@ footer a { color: var(--accent); text-decoration: none; }
   let allResults     = [];
   let productName    = "";    // what was typed
   let productSlug    = "";    // Apple's identifier for the product that was priced
+  let shownName      = "";    // product name used in messages (matched name if it differs from what was typed)
   let totalCountries = 0;
   let receivedCount  = 0;
   let activeSource   = null;
@@ -1273,6 +1276,7 @@ footer a { color: var(--accent); text-decoration: none; }
     $("summaryHome").textContent    = "—";
     $("summaryNote").textContent    = "";
     productSlug = "";
+    shownName   = query;
     showMatchNote(null);
     const sumEl = $("summary");
     sumEl.style.display = "block";
@@ -1309,6 +1313,7 @@ footer a { color: var(--accent); text-decoration: none; }
       const other = meta.substituted === true && typeof meta.matchedName === "string" && meta.matchedName.trim()
         ? meta.matchedName.trim() : null;
       const shown = other || meta.product;
+      shownName = shown;
       if (other) {
         $("summaryProduct").textContent = `🍎 ${other}`;
         document.title = `${other} — ${BASE_TITLE}`;
@@ -1474,7 +1479,10 @@ footer a { color: var(--accent); text-decoration: none; }
   }
 
   function updateSummary(view) {
-    if (!view.priced.length) return;
+    if (!view.priced.length) {
+      if (activeSource === null) animateStat("summaryFound", "0");   // finished, nothing priced
+      return;
+    }
     const line = i => `${i.r.flag} ${i.r.country} — ${fmtMoney(i.value, view.cur)}`;
 
     animateStat("summaryFound",    String(view.priced.length));
@@ -1580,6 +1588,19 @@ footer a { color: var(--accent); text-decoration: none; }
     const rows = visibleItems(view);
     updateSummary(view);
     syncControls(view);
+
+    // Search finished and no country returned a price: say so in one full-width
+    // panel instead of an empty table next to an empty chart. With "Show
+    // unavailable" ticked the table lists what each country returned.
+    if (activeSource === null && view.priced.length === 0) {
+      $("views").classList.remove("split");
+      $("chartView").style.display = "none";
+      $("chartView").innerHTML = "";
+      $("results").style.display = "";
+      if (rows.length) renderTable(view, rows); else showNoPrices();
+      return;
+    }
+
     renderTable(view, rows);
     renderChart(view, rows);
     const v = effectiveView();
@@ -1588,12 +1609,32 @@ footer a { color: var(--accent); text-decoration: none; }
     $("chartView").style.display = v === "table" ? "none" : "block";
   }
 
+  function showNoPrices() {
+    const box  = document.createElement("div");
+    box.className = "empty-note no-prices";
+    const head = document.createElement("strong");
+    head.textContent = `No prices found for ${shownName} in any country.`;
+    const hint = document.createElement("span");
+    hint.textContent = "Apple's pages for it did not show a price. " +
+      "Tick “Show unavailable” to see what each country returned.";
+    box.append(head, hint);
+    $("results").replaceChildren(box);
+  }
+
   function renderTable(view, rows) {
     const container = $("results");
 
     if (!rows.length) {
-      container.innerHTML =
-        `<p class="empty-note">No countries match these filters.</p>`;
+      // Empty because of the region / country filters?
+      const showUnavail = $("showUnavail")?.checked ?? false;
+      if (view.items.some(i => showUnavail || i.r.available)) {
+        container.innerHTML =
+          `<p class="empty-note">No countries match these filters.</p>`;
+        return;
+      }
+      // Otherwise the search is still running and no country has a price yet
+      // (renderAll handles the finished case): keep the loading rows.
+      if (!container.querySelector("tbody[data-skeleton]")) showSkeleton();
       return;
     }
 
@@ -1693,7 +1734,9 @@ footer a { color: var(--accent); text-decoration: none; }
     const el = $("chartView");
     const items = rows.filter(i => i.value !== null);
     if (!items.length || !view.cheapest) {
-      el.innerHTML = `<p class="empty-note">No prices to chart for these filters.</p>`;
+      // Filters hide every priced country, or no price has arrived yet.
+      el.innerHTML = view.priced.length
+        ? `<p class="empty-note">No prices to chart for these filters.</p>` : "";
       return;
     }
     const cheapestName = view.cheapest.r.country;
