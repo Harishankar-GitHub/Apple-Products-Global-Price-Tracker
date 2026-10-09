@@ -224,6 +224,53 @@ Visitors are told apart by the `CF-Connecting-IP` header (set by Cloudflare, whi
 
 Also capped: product names longer than 80 characters are rejected, the slug cache holds at most 500 names and the results cache at most 200 products (oldest dropped first).
 
+### Configuring it (optional)
+
+Nothing has to be configured: the limits above are on by default and `/api/cache/status` shows totals only. Everything below is optional and is done with environment variables on the server.
+
+| Variable | What it does | If not set |
+|----------|--------------|------------|
+| `ADMIN_TOKEN` | Secret that unlocks the detailed view of `/api/cache/status` | Details are never shown, to anyone |
+| `RATE_LIMIT_REQUESTS_PER_MIN` | Requests per visitor per minute | `60` |
+| `RATE_LIMIT_FETCHES_PER_10MIN` | Apple look-ups per visitor per 10 minutes | `20` |
+| `RATE_LIMIT_GLOBAL_FETCHES_PER_10MIN` | Apple look-ups for all visitors together per 10 minutes | `60` |
+
+**Setting a variable on Render**
+
+1. Open the service in the Render dashboard and go to **Environment**.
+2. Add the variable name and value, then save. Render redeploys the service with the new value.
+3. To undo, delete the variable and save again.
+
+A limit set to `0` is switched off. A value that is not a whole number is ignored and the default is used.
+
+**Choosing an `ADMIN_TOKEN`**
+
+Use a long random value and keep it out of the repository. One way to make one:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+**Seeing the detailed status**
+
+```bash
+curl -H "X-Admin-Token: <your token>" https://apple-products-global-price-tracker.onrender.com/api/cache/status
+```
+
+With the right token the response also contains `slug_cache.keys` (what was searched for), `results_cache.slugs` (which products are cached and for how long) and `you`. Send the token in a header, not in the URL, so it does not end up in logs.
+
+**Checking that visitors are told apart (do this once after deploying)**
+
+The per-visitor limits only work if the server sees each visitor's own address. In the detailed status, look at `you`:
+
+```json
+"you": { "address": "203.0.113.24", "identified_by": "CF-Connecting-IP" }
+```
+
+- `address` should be your own public IP address (search the web for "what is my IP" to compare).
+- `identified_by` should be `CF-Connecting-IP` on Render.
+- If `address` is not yours, or `identified_by` is `connection`, every visitor is being counted as one and `_client_id()` in `api/app.py` needs adjusting for the host. Until then the all-visitors limit still protects the server.
+
 ---
 
 ## Caching
