@@ -117,7 +117,7 @@ Server-Sent Events stream. Pushes each country result as it completes — the br
 | `meta` | After slug is resolved | `{ product, slug, category, total, rates, cached?, ageSeconds?, expiresInSeconds? }` — `rates` maps each listed currency to units per 1 USD; on a cache hit `ageSeconds` is how long ago the prices were fetched from Apple and `expiresInSeconds` is when they will be fetched again |
 | `result` | As each country finishes | Full country price object (see below) |
 | `done` | All countries complete | `{ product, cached? }` |
-| `error` | Bad product name / API error | `{ error: "message" }` |
+| `error` | Bad product name / API error / rate limit | `{ error: "message" }`, plus `rateLimited: true` and `retryAfterSeconds` when a limit was hit |
 
 **Example (curl):**
 ```bash
@@ -176,30 +176,100 @@ Returns `{"status": "ok"}` — for uptime monitoring.
 
 ### `GET /api/cache/status`
 
-Returns current state of all three in-memory caches — useful for debugging on free-tier hosts.
+Returns the state of the three in-memory caches and the rate limits. The public view has totals only — it does not show what anyone searched for:
 
 ```json
 {
-  "exchange_rates": {
-    "cached": true,
-    "age_seconds": 142,
-    "ttl_seconds": 1800,
-    "expires_in": 1658
-  },
-  "slug_cache": {
-    "entries": 3,
-    "keys": ["macbook air", "iphone 17", "mac mini"]
-  },
-  "results_cache": {
-    "entries": 1,
-    "ttl_seconds": 21600,
-    "ttl_seconds_incomplete": 300,
-    "slugs": {
-      "macbook-air": { "age_seconds": 87, "ttl_seconds": 21600, "expires_in": 21513 }
-    }
+  "details": "hidden — send the admin token to see search terms and product slugs",
+  "exchange_rates": { "cached": true, "age_seconds": 142, "ttl_seconds": 1800, "expires_in": 1658 },
+  "slug_cache": { "entries": 3, "max_entries": 500 },
+  "results_cache": { "entries": 1, "max_entries": 200, "ttl_seconds": 21600, "ttl_seconds_incomplete": 300 },
+  "rate_limits": {
+    "requests_per_minute": 60,
+    "apple_lookups_per_10_minutes": 20,
+    "apple_lookups_per_10_minutes_all_visitors": 60,
+    "apple_lookups_used_all_visitors": 4,
+    "visitors_tracked": 2
   }
 }
 ```
+
+To see the search terms (`slug_cache.keys`), the cached products (`results_cache.slugs`) and how the server identified you (`you`), set an `ADMIN_TOKEN` environment variable on the server and send it with the request:
+
+```bash
+curl -H "X-Admin-Token: <your token>" https://apple-products-global-price-tracker.onrender.com/api/cache/status
+```
+
+`Authorization: Bearer <your token>` works too. If `ADMIN_TOKEN` is not set, the detailed view is never available.
+
+---
+
+## Abuse protection
+
+One uncached search makes 100+ requests to apple.com from the server, so the price endpoints are rate limited:
+
+| Limit | Default | Environment variable |
+|-------|---------|----------------------|
+| Requests per visitor (cached or not) | 60 per minute | `RATE_LIMIT_REQUESTS_PER_MIN` |
+| Apple look-ups per visitor (a new product, or a name not seen before) | 20 per 10 minutes | `RATE_LIMIT_FETCHES_PER_10MIN` |
+| Apple look-ups for all visitors together | 60 per 10 minutes | `RATE_LIMIT_GLOBAL_FETCHES_PER_10MIN` |
+
+Set a variable to `0` to switch that limit off. Cached results never count as a look-up, so a visitor who is over the look-up limit can still open products that are already cached.
+
+- `/api/prices` answers `429` with `{ "error", "rateLimited": true, "retryAfterSeconds" }` and a `Retry-After` header.
+- `/api/prices/stream` sends an `error` event with the same payload, which the page shows as a message.
+- `/api/health` is not limited (the page calls it on every load).
+
+Visitors are told apart by the `CF-Connecting-IP` header (set by Cloudflare, which fronts Render), falling back to the first `X-Forwarded-For` address, then the connection address. The all-visitors limit does not depend on this, so it holds even if someone disguises their address. Counters are in memory, per process, and reset on restart.
+
+Also capped: product names longer than 80 characters are rejected, the slug cache holds at most 500 names and the results cache at most 200 products (oldest dropped first).
+
+### Configuring it (optional)
+
+Nothing has to be configured: the limits above are on by default and `/api/cache/status` shows totals only. Everything below is optional and is done with environment variables on the server.
+
+| Variable | What it does | If not set |
+|----------|--------------|------------|
+| `ADMIN_TOKEN` | Secret that unlocks the detailed view of `/api/cache/status` | Details are never shown, to anyone |
+| `RATE_LIMIT_REQUESTS_PER_MIN` | Requests per visitor per minute | `60` |
+| `RATE_LIMIT_FETCHES_PER_10MIN` | Apple look-ups per visitor per 10 minutes | `20` |
+| `RATE_LIMIT_GLOBAL_FETCHES_PER_10MIN` | Apple look-ups for all visitors together per 10 minutes | `60` |
+
+**Setting a variable on Render**
+
+1. Open the service in the Render dashboard and go to **Environment**.
+2. Add the variable name and value, then save. Render redeploys the service with the new value.
+3. To undo, delete the variable and save again.
+
+A limit set to `0` is switched off. A value that is not a whole number is ignored and the default is used.
+
+**Choosing an `ADMIN_TOKEN`**
+
+Use a long random value and keep it out of the repository. One way to make one:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+**Seeing the detailed status**
+
+```bash
+curl -H "X-Admin-Token: <your token>" https://apple-products-global-price-tracker.onrender.com/api/cache/status
+```
+
+With the right token the response also contains `slug_cache.keys` (what was searched for), `results_cache.slugs` (which products are cached and for how long) and `you`. Send the token in a header, not in the URL, so it does not end up in logs.
+
+**Checking that visitors are told apart (do this once after deploying)**
+
+The per-visitor limits only work if the server sees each visitor's own address. In the detailed status, look at `you`:
+
+```json
+"you": { "address": "203.0.113.24", "identified_by": "CF-Connecting-IP" }
+```
+
+- `address` should be your own public IP address (search the web for "what is my IP" to compare).
+- `identified_by` should be `CF-Connecting-IP` on Render.
+- If `address` is not yours, or `identified_by` is `connection`, every visitor is being counted as one and `_client_id()` in `api/app.py` needs adjusting for the host. Until then the all-visitors limit still protects the server.
 
 ---
 
