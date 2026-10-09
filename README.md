@@ -119,7 +119,7 @@ Server-Sent Events stream. Pushes each country result as it completes — the br
 | `meta` | After slug is resolved | `{ product, slug, matchedName, substituted, category, total, rates, cached?, ageSeconds?, expiresInSeconds? }` — `rates` maps each listed currency to units per 1 USD; `matchedName` / `substituted` say which product was priced and whether it differs from the one asked for (see Slug Resolution); on a cache hit `ageSeconds` is how long ago the prices were fetched from Apple and `expiresInSeconds` is when they will be fetched again |
 | `result` | As each country finishes | Full country price object (see below) |
 | `done` | All countries complete | `{ product, cached? }` |
-| `error` | Bad product name / API error / rate limit | `{ error: "message" }`, plus `rateLimited: true` and `retryAfterSeconds` when a limit was hit |
+| `error` | Bad product name / API error / rate limit / Apple unreachable | `{ error: "message" }`, plus `rateLimited: true` and `retryAfterSeconds` when a limit was hit, or `temporary: true` and `retryAfterSeconds` when Apple could not be checked |
 
 **Example (curl):**
 ```bash
@@ -284,7 +284,7 @@ Three in-memory caches reduce latency and external HTTP calls:
 | Cache | Key | TTL | What it stores |
 |-------|-----|-----|----------------|
 | Exchange rates | global | 30 min | USD conversion rates from open.er-api.com |
-| Slug resolution | product name | process lifetime | Resolved apple.com slug per product name |
+| Slug resolution | product name | depends on the answer (see below) | Resolved apple.com slug per product name |
 | Price results | slug | 6 hours (5 min if incomplete) | Full 50-country result set |
 
 On a cache hit for price results, the SSE stream replays cached rows as rapid-fire events — the browser still sees the same `searching → meta → result × N → done` flow, just near-instantly.
@@ -295,6 +295,17 @@ Price results are kept for 6 hours (`RESULTS_TTL` in `api/app.py`) because Apple
 - **Currency conversion does not age with the cache.** On a cache hit the USD prices and the `rates` table are recalculated from the current exchange rates (themselves refreshed every 30 min); only the local prices come from the cache.
 
 The page shows how old cached prices are ("⚡ cached · prices from 2 h 5 min ago").
+
+**How long a name look-up is remembered** depends on how sure the answer is, so that one Apple timeout cannot make a product "not found" (or pin it to the wrong page) until the server restarts:
+
+| Outcome of the look-up | Kept for | Constant |
+|------------------------|----------|----------|
+| Found, and every check Apple was asked answered | life of the process | — |
+| Found a fallback page while one of the checks failed | 5 minutes, then looked up again | `SLUG_TTL_UNSURE` |
+| Not found, and every check answered | 1 hour (Apple adds products) | `SLUG_TTL_NOT_FOUND` |
+| Could not tell — Apple timed out, errored or blocked the check | 1 minute, only to stop retry storms | `SLUG_TTL_FAILED` |
+
+The last case is never reported as "not found". `/api/prices` answers `503` with `{ "error", "temporary": true, "retryAfterSeconds" }` and a `Retry-After` header; the stream sends the same payload as an `error` event, which the page shows as "Apple did not respond while looking up … Please try again in 60 seconds." Products that are already known keep working during such an outage, and their cached prices are still served. A failure of Apple's search-suggestions service alone does not count: it is only a hint, and the page checks decide.
 
 > These are **in-memory** caches. They are cleared when the server restarts (including Render free-tier cold starts). Redis support can be added later for persistence across restarts.
 
