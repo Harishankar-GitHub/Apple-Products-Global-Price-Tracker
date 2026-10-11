@@ -668,6 +668,12 @@ def _lookup_failed_payload(product: str, wait: int) -> dict:
 # ---------------------------------------------------------------------------
 
 def get_min_price(slug: str) -> float:
+    """
+    Lowest plausible price for a product family, in US DOLLARS. A number below
+    it on a product page is something else (a monthly instalment, an accessory,
+    a trade-in value). Compare prices against local_min_price(), which converts
+    this into the store's currency — never against this figure directly.
+    """
     s = slug.lower()
     if "mac-pro"           in s: return 5000
     if "mac-studio"        in s: return 1500
@@ -687,7 +693,34 @@ def get_min_price(slug: str) -> float:
     return 50
 
 
+# Stores sometimes price a product below the US price once converted, so the
+# floor is applied with some room under it. Instalments are a twelfth of the
+# price or less, far below this.
+PRICE_FLOOR_SLACK = 0.8
+
+
+def local_min_price(slug: str, currency: str, rates: dict[str, float]) -> float:
+    """
+    The sanity floor for `slug` in a store's own currency.
+
+    The floor is defined in dollars; a store's price is in its own currency.
+    Comparing the two directly rejected valid prices in currencies worth more
+    than a dollar (245 KWD is a real iPhone price, but 245 < 500) and accepted
+    instalments in currencies worth much less (₹6,908 a month is not an iPhone
+    price, but 6908 > 500). `rates` maps a currency to units per 1 USD.
+
+    If the currency has no rate the dollar figure is returned unchanged, which
+    is how every store was checked before; such a row cannot be ranked anyway.
+    """
+    floor_usd = get_min_price(slug)
+    rate = 1.0 if currency == "USD" else (rates.get(currency) or 0)
+    if not rate or rate <= 0:
+        return floor_usd
+    return floor_usd * rate * PRICE_FLOOR_SLACK
+
+
 def extract_low_price(html: str, min_price: float) -> Optional[float]:
+    """First price on the page that is at least `min_price` (in the page's own currency)."""
     for pattern in (r'"lowPrice"\s*:\s*([\d.]+)', r'"amount"\s*:\s*([\d.]+)'):
         m = re.search(pattern, html)
         if m:
@@ -720,7 +753,7 @@ async def _fetch_price_async(
     category: str,
     rates: dict[str, float],
 ) -> dict:
-    min_price = get_min_price(slug)
+    min_price = local_min_price(slug, currency, rates)    # floor in this store's currency
     shop_url  = build_shop_url(prefix, category, slug)
     prod_url  = build_product_url(prefix, slug)
     flag      = COUNTRY_FLAGS.get(country, "🏳")
