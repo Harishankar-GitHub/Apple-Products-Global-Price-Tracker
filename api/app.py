@@ -14,7 +14,7 @@ import asyncio
 import queue
 import threading
 from collections import deque
-from typing import Optional
+from typing import NamedTuple, Optional
 from urllib.parse import urlparse
 
 import aiohttp
@@ -33,11 +33,23 @@ _rates_cache: dict[str, float] = {}
 _rates_fetched_at: float = 0.0
 RATES_TTL = 30 * 60
 
-# Cache 2 — Slug resolution  (no TTL — valid for process lifetime)
+# Cache 2 — Slug resolution
 #   Keyed by whatever was typed, so it is capped: the oldest entries are
 #   dropped once it holds SLUG_CACHE_MAX names.
-_slug_cache: dict[str, Optional[tuple[str, str]]] = {}
-SLUG_CACHE_MAX = 500
+#   Each entry: {"result": (slug, category) or None, "expires": monotonic time
+#   or None, "failed": bool}. How long an answer is kept depends on how sure
+#   it is, so that one Apple timeout cannot make a product "not found" (or
+#   pin it to the wrong page) until the server restarts:
+#     found, every check answered      → kept for the life of the process
+#     found a fallback while a check failed → SLUG_TTL_UNSURE, then looked up again
+#     not found, every check answered  → SLUG_TTL_NOT_FOUND (Apple adds products)
+#     could not tell (Apple did not answer) → SLUG_TTL_FAILED, and reported as
+#                                         "try again", never as "not found"
+_slug_cache: dict[str, dict] = {}
+SLUG_CACHE_MAX     = 500
+SLUG_TTL_NOT_FOUND = 60 * 60      # 1 hour
+SLUG_TTL_UNSURE    = 5 * 60       # 5 minutes
+SLUG_TTL_FAILED    = 60           # 1 minute — only long enough to stop retry storms
 
 # Cache 3 — Price results per slug
 #   Apple changes prices rarely, so a complete result set is kept for hours.
@@ -456,7 +468,15 @@ def match_info(product_name: str, slug: str) -> dict:
             "substituted": _name_key(product_name) != _name_key(slug)}
 
 
-async def _async_probe(session: aiohttp.ClientSession, url: str) -> bool:
+# A page check that ends in one of these told us something definite ("the page
+# exists" / "there is no such page"). Anything else — a timeout, a network
+# error, 403, 429, 5xx — means Apple could not be asked, and is noted in the
+# `failures` list the checks are given so the caller knows its answer is unsure.
+_DEFINITE_STATUSES = (200, 404, 410)
+
+
+async def _async_probe(session: aiohttp.ClientSession, url: str,
+                       failures: Optional[list] = None) -> bool:
     """
     Returns True only if the final URL's first path segment matches the
     probed slug — rejects silent homepage redirects.
@@ -468,45 +488,62 @@ async def _async_probe(session: aiohttp.ClientSession, url: str) -> bool:
                 probed_slug = urlparse(url).path.strip("/").split("/")[0]
                 final_slug  = urlparse(str(r.url)).path.strip("/").split("/")[0]
                 return bool(probed_slug and probed_slug == final_slug)
+            if r.status not in _DEFINITE_STATUSES and failures is not None:
+                failures.append(url)
     except Exception:
-        pass
+        if failures is not None:
+            failures.append(url)
     return False
 
 
-async def _async_page_is_for(session: aiohttp.ClientSession, url: str, slug: str) -> bool:
+async def _async_page_is_for(session: aiohttp.ClientSession, url: str, slug: str,
+                             failures: Optional[list] = None) -> bool:
     """True if `url` answers 200 and, after redirects, is still a page for `slug`."""
     try:
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=12),
                                allow_redirects=True) as r:
+            if r.status not in _DEFINITE_STATUSES and failures is not None:
+                failures.append(url)
             return r.status == 200 and slug in urlparse(str(r.url)).path
     except Exception:
+        if failures is not None:
+            failures.append(url)
         return False
 
 
-async def _override_is_live(session: aiohttp.ClientSession, slug: str, category: str) -> bool:
+async def _override_is_live(session: aiohttp.ClientSession, slug: str, category: str,
+                            failures: Optional[list] = None) -> bool:
     """
     An override is used only while Apple still has a page for its slug: the
     product page, or the US buy page for products that have no product page.
     Apple redirects retired product pages to the line-up page, which fails both.
     """
     product_ok, shop_ok = await asyncio.gather(
-        _async_probe(session, f"https://www.apple.com/{slug}/"),
-        _async_page_is_for(session, build_shop_url("", category, slug), slug),
+        _async_probe(session, f"https://www.apple.com/{slug}/", failures),
+        _async_page_is_for(session, build_shop_url("", category, slug), slug, failures),
     )
     return product_ok or shop_ok
 
 
-async def _async_resolve_slug(product_name: str) -> Optional[tuple[str, str]]:
-    """All apple.com probing runs concurrently inside one aiohttp session."""
+async def _async_resolve_slug(product_name: str) -> tuple[Optional[tuple[str, str]], bool]:
+    """
+    All apple.com probing runs concurrently inside one aiohttp session.
+    Returns (result, unsure). `unsure` is True when a page check failed for a
+    temporary reason before the answer was reached, so the answer — a fallback
+    page, or "not found" — might be different once Apple responds again. An
+    exact match is never unsure. Failures of the suggestions service alone do
+    not count: it is only a hint, and the page checks decide.
+    """
     override  = SLUG_OVERRIDES.get(product_name.strip().lower())
     candidate = name_to_slug(product_name)
     category  = infer_category(candidate)
+    failures: list = []
 
     async with aiohttp.ClientSession(headers=HEADERS,
                                      connector=_make_connector()) as session:
         # 0. Known name: use its slug while Apple still serves it, else carry on below
-        if override and await _override_is_live(session, *override):
-            return override
+        if override and await _override_is_live(session, *override, failures):
+            return override, False
 
         # 1. Direct probe + suggestions API call in parallel
         async def suggestions() -> Optional[tuple[str, str]]:
@@ -525,21 +562,21 @@ async def _async_resolve_slug(product_name: str) -> Optional[tuple[str, str]]:
                                 path = url_hint.rstrip("/").split("apple.com/")[-1].strip("/")
                                 slug = path.split("/")[0]
                                 if slug and slug not in ("shop", "store", "search"):
-                                    if await _async_probe(session, f"https://www.apple.com/{slug}/"):
+                                    if await _async_probe(session, f"https://www.apple.com/{slug}/", failures):
                                         return (slug, infer_category(slug))
             except Exception:
                 pass
             return None
 
         direct_ok, suggestion_result = await asyncio.gather(
-            _async_probe(session, f"https://www.apple.com/{candidate}/"),
+            _async_probe(session, f"https://www.apple.com/{candidate}/", failures),
             suggestions(),
         )
 
         if direct_ok:
-            return (candidate, category)
+            return (candidate, category), False     # exact page exists: certain
         if suggestion_result:
-            return suggestion_result
+            return suggestion_result, bool(failures)
 
         # 2. Try common variations concurrently
         words = candidate.split("-")
@@ -553,32 +590,77 @@ async def _async_resolve_slug(product_name: str) -> Optional[tuple[str, str]]:
         variations = [v for v in variations if v != candidate]
 
         probe_tasks = [
-            _async_probe(session, f"https://www.apple.com/{v}/")
+            _async_probe(session, f"https://www.apple.com/{v}/", failures)
             for v in variations
         ]
         results = await asyncio.gather(*probe_tasks)
         for var, ok in zip(variations, results):
             if ok:
-                return (var, infer_category(var))
+                return (var, infer_category(var)), bool(failures)
 
-    return None
+    return None, bool(failures)
 
 
-def discover_slug(product_name: str) -> Optional[tuple[str, str]]:
+class SlugLookup(NamedTuple):
+    """Outcome of resolving a product name."""
+    result: Optional[tuple[str, str]]   # (slug, category), or None
+    failed: bool = False                # True: Apple could not be checked, so "not found" is NOT known
+    retry_after: int = 0                # seconds until a failed look-up is tried again
+
+
+def _slug_entry(cache_key: str) -> Optional[dict]:
+    """The live cache entry for a name, dropping it if it has expired."""
+    entry = _slug_cache.get(cache_key)
+    if entry is None:
+        return None
+    if entry["expires"] is not None and time.monotonic() >= entry["expires"]:
+        _slug_cache.pop(cache_key, None)
+        return None
+    return entry
+
+
+def _as_lookup(entry: dict) -> SlugLookup:
+    wait = 0
+    if entry["failed"]:
+        wait = max(1, math.ceil(entry["expires"] - time.monotonic()))
+    return SlugLookup(entry["result"], entry["failed"], wait)
+
+
+def discover_slug(product_name: str) -> SlugLookup:
     """Sync entry point — Cache 2 wraps the async resolver."""
     cache_key = product_name.strip().lower()
-    if cache_key in _slug_cache:
-        return _slug_cache[cache_key]               # Cache 2 hit
-    result = asyncio.run(_async_resolve_slug(product_name))
-    _slug_cache[cache_key] = result                 # store even if None
+    entry = _slug_entry(cache_key)
+    if entry is not None:
+        return _as_lookup(entry)                    # Cache 2 hit
+
+    result, unsure = asyncio.run(_async_resolve_slug(product_name))
+    if result and not unsure:
+        ttl = None                                  # certain: keep
+    elif result:
+        ttl = SLUG_TTL_UNSURE                       # a fallback found while a check failed
+    elif not unsure:
+        ttl = SLUG_TTL_NOT_FOUND                    # Apple answered: no such page
+    else:
+        ttl = SLUG_TTL_FAILED                       # Apple did not answer: unknown
+    entry = {"result": result,
+             "expires": None if ttl is None else time.monotonic() + ttl,
+             "failed": result is None and unsure}
+    _slug_cache.pop(cache_key, None)                # re-insert so it counts as newest
+    _slug_cache[cache_key] = entry
     while len(_slug_cache) > SLUG_CACHE_MAX:        # drop the oldest names
         _slug_cache.pop(next(iter(_slug_cache)), None)
-    return result
+    return _as_lookup(entry)
 
 
 def slug_is_known(product_name: str) -> bool:
     """True when resolving this name needs no request to apple.com."""
-    return product_name.strip().lower() in _slug_cache
+    return _slug_entry(product_name.strip().lower()) is not None
+
+
+def _lookup_failed_payload(product: str, wait: int) -> dict:
+    return {"error": f"Apple did not respond while looking up \"{product}\", so it could not be "
+                     f"checked. Please try again in {_human_wait(wait)}.",
+            "temporary": True, "retryAfterSeconds": wait}
 
 
 # ---------------------------------------------------------------------------
@@ -850,14 +932,19 @@ def get_prices():
             return _limit_response(*denied)
         charged = True
 
-    result = discover_slug(product)
-    if not result:
+    lookup = discover_slug(product)
+    if lookup.failed:                                # Apple unreachable — not the same as "not found"
+        resp = jsonify(_lookup_failed_payload(product, lookup.retry_after))
+        resp.status_code = 503
+        resp.headers["Retry-After"] = str(lookup.retry_after)
+        return resp
+    if not lookup.result:
         return jsonify({
             "error": f"Could not find '{product}' on apple.com. "
                      "Check the product name, e.g. 'MacBook Air', 'iPhone Air', 'AirPods Pro'."
         }), 404
 
-    slug, category = result
+    slug, category = lookup.result
 
     hit = _cache_get(slug)
     if hit:                                          # Cache 3 hit
@@ -908,14 +995,18 @@ def get_prices_stream():
                 return
             charged = True
 
-        result = discover_slug(product)             # Cache 2 — instant on repeat
-        if not result:
+        lookup = discover_slug(product)             # Cache 2 — instant on repeat
+        if lookup.failed:                           # Apple unreachable — not the same as "not found"
+            payload = _lookup_failed_payload(product, lookup.retry_after)
+            yield f"event: error\ndata: {json.dumps(payload)}\n\n"
+            return
+        if not lookup.result:
             msg = (f"Could not find \"{product}\" on apple.com. "
                    "Try a different name, e.g. \"MacBook Air\", \"iPhone Air\", \"AirPods Pro\".")
             yield f"event: error\ndata: {json.dumps({'error': msg})}\n\n"
             return
 
-        slug, category = result
+        slug, category = lookup.result
 
         # Cache 3 hit — replay stored rows as fast SSE events
         hit = _cache_get(slug)
@@ -1015,6 +1106,8 @@ def cache_status():
         "slug_cache": {
             "entries": len(_slug_cache),
             "max_entries": SLUG_CACHE_MAX,
+            "not_found_ttl_seconds": SLUG_TTL_NOT_FOUND,
+            "failed_lookup_ttl_seconds": SLUG_TTL_FAILED,
         },
         "results_cache": {
             "entries": len(_results_cache),
