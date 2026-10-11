@@ -349,6 +349,14 @@ Apple embeds a JSON-LD `AggregateOffer` block in their `/shop/buy-<category>/<sl
 
 This `lowPrice` is the **base model starting price** — present in static HTML (no JS execution needed). It matches the "From $X" price shown on Apple's product pages.
 
+### Sanity floor
+
+A page can also contain smaller numbers that are not the price — a monthly instalment, an accessory, a trade-in value — so a figure is only accepted if it is at least a minimum for that product family. The minimums are in US dollars (`get_min_price` in `api/app.py`: iPhone 500, MacBook 800, AirTag 20, …).
+
+Each store's price is in its own currency, so the minimum is converted with the current exchange rate before comparing (`local_min_price`), and applied with 20% room under it (`PRICE_FLOOR_SLACK`) for stores that price a product below the US price. For an iPhone that is $400 in the US, about 124 KWD in Kuwait and ₹33,600 in India.
+
+Comparing the dollar figure directly, as before, went wrong in both directions: a real iPhone price of 245 KWD was rejected because 245 < 500, and an instalment of ₹6,908 a month was accepted because 6908 > 500. If a currency has no exchange rate the dollar figure is used unchanged.
+
 ---
 
 ## Supported Countries (50)
