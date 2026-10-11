@@ -1,7 +1,8 @@
 """
 Apple Products Global Price Tracker — Flask API
 All outbound HTTP calls use aiohttp + asyncio so all 50 country requests
-fire simultaneously in a single thread (no ThreadPoolExecutor).
+fire simultaneously in a single thread (no ThreadPoolExecutor). Each store
+needs one page download when its buy page has the price, two otherwise.
 """
 
 import re
@@ -360,11 +361,19 @@ SLUG_OVERRIDES: dict[str, tuple[str, str]] = {
 # Async HTTP helpers
 # ---------------------------------------------------------------------------
 
+# Connections open to apple.com at the same time. Every request goes to the
+# one host (www.apple.com), so this is what decides how many stores are
+# actually fetched at once: 50 gives each of the 50 stores its own connection.
+# It was 10, which made a search queue through five rounds. Lower it with the
+# APPLE_MAX_CONNECTIONS environment variable if Apple starts refusing requests.
+APPLE_MAX_CONNECTIONS = max(1, _env_int("APPLE_MAX_CONNECTIONS", 50))
+
+
 def _make_connector() -> aiohttp.TCPConnector:
-    """Shared connector with a generous limit — all 50 requests fire at once."""
+    """Connector that lets every store be fetched at once (see APPLE_MAX_CONNECTIONS)."""
     return aiohttp.TCPConnector(
-        limit=100,          # total concurrent connections
-        limit_per_host=10,  # per apple.com host (avoids triggering rate limits)
+        limit=APPLE_MAX_CONNECTIONS,           # total concurrent connections
+        limit_per_host=APPLE_MAX_CONNECTIONS,  # all of them go to www.apple.com
         ttl_dns_cache=300,  # cache DNS for 5 min
         enable_cleanup_closed=True,
     )
@@ -759,49 +768,42 @@ async def _fetch_price_async(
     flag      = COUNTRY_FLAGS.get(country, "🏳")
     timeout   = aiohttp.ClientTimeout(total=20)
 
-    # True when a request failed for a reason that may not last (timeout, network
-    # error, rate limit, server error) — as opposed to a clean 200 or 404.
-    had_error = False
-
-    async def _try(url: str) -> Optional[float]:
-        nonlocal had_error
+    async def _fetch(url: str) -> tuple[Optional[float], str]:
+        """
+        Download one page once and return (price, outcome). Outcome is:
+          "ok"      — a page for this product (the price may still be None)
+          "missing" — 404, or redirected to a different page: Apple sends
+                      products a country does not sell to the line-up page,
+                      and a price found there would belong to another product
+          "error"   — could not tell: timeout, network error, rate limit,
+                      server error — anything that may not last
+        """
         try:
             async with session.get(url, timeout=timeout, allow_redirects=True) as r:
                 if r.status == 200:
                     if slug not in urlparse(str(r.url)).path:
-                        # Redirected to a different page (Apple sends products a
-                        # country does not sell to the line-up page). A price
-                        # found there would belong to some other product.
-                        return None
+                        return None, "missing"
                     html = await r.text()
-                    return extract_low_price(html, min_price)
-                if r.status != 404:
-                    had_error = True
+                    return extract_low_price(html, min_price), "ok"
+                return None, ("missing" if r.status == 404 else "error")
         except Exception:
-            had_error = True
-        return None
+            return None, "error"
 
-    # Try shop URL first; fall back to product URL.
-    # Both run concurrently — whichever has price data wins.
-    shop_price, prod_price = await asyncio.gather(_try(shop_url), _try(prod_url))
-    price_val = shop_price or prod_price
+    # The buy page normally carries the price, so it is fetched first and the
+    # (much larger) product page only if the buy page had none. Each page is
+    # downloaded at most once: what the product page answered also tells a
+    # product this country does not sell from one whose price could not be read.
+    price_val, shop_outcome = await _fetch(shop_url)
+    if price_val is None:
+        price_val, prod_outcome = await _fetch(prod_url)
 
     if price_val is None:
-        # One more attempt to distinguish "404 not in this country" vs "page exists but no price"
-        try:
-            async with session.get(prod_url, timeout=aiohttp.ClientTimeout(total=10),
-                                   allow_redirects=True) as r:
-                redirected_away = r.status == 200 and slug not in urlparse(str(r.url)).path
-                if r.status == 404 or redirected_away:
-                    return {"country": country, "flag": flag, "available": False,
-                            "reason": "Not available in this country", "url": prod_url}
-                if r.status != 200:
-                    had_error = True
-        except Exception:
-            had_error = True
+        if prod_outcome == "missing":
+            return {"country": country, "flag": flag, "available": False,
+                    "reason": "Not available in this country", "url": prod_url}
         row = {"country": country, "flag": flag, "available": False,
                "reason": "Price not found", "url": prod_url}
-        if had_error:
+        if "error" in (shop_outcome, prod_outcome):
             # Internal marker, removed before the row is sent or cached
             # (see _pop_transient): this "no price" may be temporary.
             row["_transient"] = True
