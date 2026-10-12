@@ -924,11 +924,28 @@ footer a { color: var(--accent); text-decoration: none; }
 
   const $ = id => document.getElementById(id);
 
-  // Debounced render — 220ms while streaming, immediate when done
-  let renderTimer = null;
+  // Table redraws while results stream in. The first result is drawn at once;
+  // after that the table is redrawn at most every RENDER_INTERVAL_MS however
+  // fast results arrive. (It used to wait for a pause in results, and every new
+  // result restarted the wait, so a quick burst postponed the first rows.)
+  // The interval matches the 0.45 s row-move animation, so a re-sort finishes
+  // before the next one starts. `immediate` (search finished) draws straight away.
+  const RENDER_INTERVAL_MS = 500;
+  let renderTimer  = null;
+  let lastRenderAt = 0;
   function scheduleRender(immediate) {
+    if (immediate) { cancelScheduledRender(); drawNow(); return; }
+    if (renderTimer !== null) return;               // a redraw is already booked
+    const wait = Math.max(0, lastRenderAt + RENDER_INTERVAL_MS - Date.now());
+    renderTimer = setTimeout(() => { renderTimer = null; drawNow(); }, wait);
+  }
+  function cancelScheduledRender() {
     clearTimeout(renderTimer);
-    renderTimer = setTimeout(renderAll, immediate ? 0 : 220);
+    renderTimer = null;
+  }
+  function drawNow() {
+    lastRenderAt = Date.now();
+    renderAll();
   }
 
   // ── Small helpers ────────────────────────────────────────────────────────
@@ -1238,6 +1255,8 @@ footer a { color: var(--accent); text-decoration: none; }
 
     closeSuggest();
     if (activeSource) { activeSource.close(); activeSource = null; }
+    cancelScheduledRender();
+    lastRenderAt = 0;
     writeUrl(query, fromHistory);
     document.title = `${query} — ${BASE_TITLE}`;
 
@@ -1418,6 +1437,7 @@ footer a { color: var(--accent); text-decoration: none; }
   // Back to the empty landing state (used by back/forward navigation).
   function resetToLanding() {
     if (activeSource) { activeSource.close(); activeSource = null; }
+    cancelScheduledRender();
     stopWaitingForServer();
     allResults = [];
     rowEls.clear();

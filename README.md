@@ -238,6 +238,7 @@ Nothing has to be configured: the limits above are on by default and `/api/cache
 | `RATE_LIMIT_REQUESTS_PER_MIN` | Requests per visitor per minute | `60` |
 | `RATE_LIMIT_FETCHES_PER_10MIN` | Apple look-ups per visitor per 10 minutes | `20` |
 | `RATE_LIMIT_GLOBAL_FETCHES_PER_10MIN` | Apple look-ups for all visitors together per 10 minutes | `60` |
+| `APPLE_MAX_CONNECTIONS` | Connections open to apple.com at once, i.e. how many stores are fetched in parallel | `50` |
 
 **Setting a variable on Render**
 
@@ -348,6 +349,12 @@ Apple embeds a JSON-LD `AggregateOffer` block in their `/shop/buy-<category>/<sl
 ```
 
 This `lowPrice` is the **base model starting price** — present in static HTML (no JS execution needed). It matches the "From $X" price shown on Apple's product pages.
+
+### Requests per search
+
+Every request goes to one host, `www.apple.com`, so the number of connections allowed to that host decides how many stores are really fetched at once. It is 50 — one per store (`APPLE_MAX_CONNECTIONS`). If Apple starts refusing requests, lower it with the environment variable of the same name; 10 is the old value.
+
+Per store, the buy page is fetched first because it normally has the price. The larger product page (`apple.com/<cc>/<slug>/`) is fetched only if the buy page had no price, and no page is downloaded twice: what the product page answered (found, 404, redirected elsewhere, or failed) also decides between "Not available in this country" and "Price not found". That is one download for a store whose buy page has the price and two otherwise — about 70 for a typical product, 100 at most.
 
 ### Sanity floor
 
