@@ -49,6 +49,7 @@ apple-global-price-tracker/
 │   └── index.html          # Single-file frontend (HTML + CSS + JS)
 ├── api/
 │   ├── app.py              # Flask API — async price fetching + SSE streaming
+│   ├── gunicorn.conf.py    # Server settings: threads and timeouts
 │   ├── requirements.txt
 │   └── render.yaml         # Render deployment config
 └── README.md
@@ -69,6 +70,8 @@ apple-global-price-tracker/
 > **Free tier note:** Render spins down the service after ~15 min of inactivity. The first request after a cold start takes 30–60 s to wake up. In-memory caches (exchange rates, slug resolutions, price results) are cleared on each cold start.
 >
 > To soften this, the page sends a request to `/api/health` as soon as it loads, so the service starts waking while the visitor is still typing. If a search is still waiting for the service's first reply (the ping has gone unanswered for 1.5 s, or the search for 3 s), the progress area shows "Waking up the server… this can take up to a minute" with a seconds counter and a moving bar.
+
+**Start command.** `render.yaml` starts the API with `gunicorn -c gunicorn.conf.py app:app`. If your service was created by hand with `gunicorn app:app` as the start command, that works too: gunicorn reads `gunicorn.conf.py` by itself when it starts in the `api` folder (the Root Directory). The file sets how many visitors are served at once — see [Serving several visitors at once](#serving-several-visitors-at-once).
 
 ### Step 2 — Configure the Frontend
 
@@ -98,6 +101,8 @@ cd api
 pip install -r requirements.txt
 python app.py
 # API at http://localhost:5000
+# or, as on Render (threads and timeouts from gunicorn.conf.py):
+# PORT=5000 gunicorn app:app
 ```
 
 Open `docs/index.html` directly in a browser or with VS Code Live Server.  
@@ -116,10 +121,11 @@ Server-Sent Events stream. Pushes each country result as it completes — the br
 | Event | When | Payload |
 |-------|------|---------|
 | `searching` | Immediately on request | `{ product }` |
+| `queued` | Only when the server is already fetching other searches; this one waits for a free slot (up to 45 s) | `{ message, maxWaitSeconds }` |
 | `meta` | After slug is resolved | `{ product, slug, matchedName, substituted, category, total, rates, cached?, ageSeconds?, expiresInSeconds? }` — `rates` maps each listed currency to units per 1 USD; `matchedName` / `substituted` say which product was priced and whether it differs from the one asked for (see Slug Resolution); on a cache hit `ageSeconds` is how long ago the prices were fetched from Apple and `expiresInSeconds` is when they will be fetched again |
 | `result` | As each country finishes | Full country price object (see below) |
 | `done` | All countries complete | `{ product, cached? }` |
-| `error` | Bad product name / API error / rate limit / Apple unreachable | `{ error: "message" }`, plus `rateLimited: true` and `retryAfterSeconds` when a limit was hit, or `temporary: true` and `retryAfterSeconds` when Apple could not be checked |
+| `error` | Bad product name / API error / rate limit / Apple unreachable / server busy | `{ error: "message" }`, plus `rateLimited: true` and `retryAfterSeconds` when a limit was hit, or `temporary: true` and `retryAfterSeconds` when Apple could not be checked, no fetch slot came free in time, or the fetch broke off part-way |
 
 **Example (curl):**
 ```bash
@@ -239,6 +245,8 @@ Nothing has to be configured: the limits above are on by default and `/api/cache
 | `RATE_LIMIT_FETCHES_PER_10MIN` | Apple look-ups per visitor per 10 minutes | `20` |
 | `RATE_LIMIT_GLOBAL_FETCHES_PER_10MIN` | Apple look-ups for all visitors together per 10 minutes | `60` |
 | `APPLE_MAX_CONNECTIONS` | Connections open to apple.com at once, i.e. how many stores are fetched in parallel | `50` |
+| `MAX_PARALLEL_FETCHES` | Searches that fetch from apple.com at the same time; others wait for a free slot (minimum 1) | `2` |
+| `WEB_THREADS` | Requests the server handles at the same time (minimum 1) | `16` |
 
 **Setting a variable on Render**
 
@@ -309,6 +317,18 @@ The page shows how old cached prices are ("⚡ cached · prices from 2 h 5 min a
 The last case is never reported as "not found". `/api/prices` answers `503` with `{ "error", "temporary": true, "retryAfterSeconds" }` and a `Retry-After` header; the stream sends the same payload as an `error` event, which the page shows as "Apple did not respond while looking up … Please try again in 60 seconds." Products that are already known keep working during such an outage, and their cached prices are still served. A failure of Apple's search-suggestions service alone does not count: it is only a hint, and the page checks decide.
 
 > These are **in-memory** caches. They are cleared when the server restarts (including Render free-tier cold starts). Redis support can be added later for persistence across restarts.
+
+---
+
+## Serving several visitors at once
+
+The API runs as one gunicorn process with a pool of threads, set in `api/gunicorn.conf.py`:
+
+- **Visitors are served side by side.** Each request gets its own thread (16 by default, `WEB_THREADS`), so a search in progress does not hold anyone else up: cached results, health checks and other searches are answered meanwhile. Gunicorn's default worker, used before, served one request at a time.
+- **Slow searches are not cut off.** With threads, gunicorn's `timeout` (120 s) only checks that the process is still alive; it does not limit how long a request may take. Before, a search still streaming after 30 s was cut off mid-way.
+- **One process, on purpose.** The caches and rate-limit counters live in the process's memory, and a second process would have its own separate copies.
+- **Two searches fetch from Apple at a time** (`MAX_PARALLEL_FETCHES`). Each one opens up to 50 connections to apple.com and holds those pages in memory, so on a small instance a burst of new searches is let through a couple at a time. A further search waits for a free slot while the page shows "Busy with other searches — yours starts in a moment…". If none comes free within 45 s, it gets a "busy, please try again" message (`/api/prices` answers `503` with `temporary: true` and a `Retry-After` header). When a waiting search gets its slot it checks the cache again, so if it was waiting behind a search for the same product it gets those results instead of fetching them again. Cached results never wait for a slot.
+- **Closing the page does not waste a fetch.** A search that has started fetching finishes and stores its results in the cache, ready for the next visitor. A search still waiting for a slot gives up as soon as the visitor leaves.
 
 ---
 

@@ -3,7 +3,7 @@ services:
     name: apple-global-price-tracker-api
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: gunicorn -c gunicorn.conf.py app:app   # threads and timeouts are set in gunicorn.conf.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0

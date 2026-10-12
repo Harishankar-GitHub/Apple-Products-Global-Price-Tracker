@@ -29,6 +29,11 @@ CORS(app)
 # In-memory caches
 # ---------------------------------------------------------------------------
 
+# Requests are served by several threads at once (see gunicorn.conf.py), so
+# reads and writes of the slug and results caches go through this lock.
+# (Exchange rates are swapped in as a whole new dict, so they need none.)
+_cache_lock = threading.RLock()
+
 # Cache 1 — Exchange rates  (TTL: 30 min)
 _rates_cache: dict[str, float] = {}
 _rates_fetched_at: float = 0.0
@@ -368,6 +373,47 @@ SLUG_OVERRIDES: dict[str, tuple[str, str]] = {
 # APPLE_MAX_CONNECTIONS environment variable if Apple starts refusing requests.
 APPLE_MAX_CONNECTIONS = max(1, _env_int("APPLE_MAX_CONNECTIONS", 50))
 
+# Searches that fetch from apple.com at the same time. Visitors are served in
+# parallel, but each such search opens up to APPLE_MAX_CONNECTIONS connections
+# and holds those pages in memory, so a burst of visitors searching for new
+# products is let through a couple at a time instead of multiplying both.
+# Cached results, health checks and everything else are not limited by this.
+# A search waits up to FETCH_SLOT_WAIT seconds for a free slot, then is told to
+# try again.
+MAX_PARALLEL_FETCHES = max(1, _env_int("MAX_PARALLEL_FETCHES", 2))
+FETCH_SLOT_WAIT   = 45      # seconds a search may wait for a slot
+FETCH_SLOT_NOTICE = 5       # while a stream waits, it sends a line this often (seconds)
+_fetch_slots = threading.BoundedSemaphore(MAX_PARALLEL_FETCHES)
+
+
+def _busy_payload() -> dict:
+    return {"error": "The service is busy fetching prices for other visitors. "
+                     "Please try again in a few seconds.",
+            "temporary": True, "retryAfterSeconds": 10}
+
+
+def _wait_for_fetch_slot():
+    """
+    For the stream route (use with `yield from`): waits up to FETCH_SLOT_WAIT
+    seconds for a fetch slot and returns True once it holds one, False if none
+    came free. While waiting it tells the page (a `queued` event, then a comment
+    line every few seconds). Writing to the connection also notices a visitor
+    who has closed the page, which ends the wait instead of taking a slot that
+    nobody needs any more.
+    """
+    if _fetch_slots.acquire(blocking=False):
+        return True
+    queued = {"message": "Waiting for other searches to finish", "maxWaitSeconds": FETCH_SLOT_WAIT}
+    yield f"event: queued\ndata: {json.dumps(queued)}\n\n"
+    deadline = time.monotonic() + FETCH_SLOT_WAIT
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        if _fetch_slots.acquire(timeout=min(FETCH_SLOT_NOTICE, remaining)):
+            return True
+        yield ": still waiting for a free fetch slot\n\n"
+
 
 def _make_connector() -> aiohttp.TCPConnector:
     """Connector that lets every store be fetched at once (see APPLE_MAX_CONNECTIONS)."""
@@ -619,13 +665,14 @@ class SlugLookup(NamedTuple):
 
 def _slug_entry(cache_key: str) -> Optional[dict]:
     """The live cache entry for a name, dropping it if it has expired."""
-    entry = _slug_cache.get(cache_key)
-    if entry is None:
-        return None
-    if entry["expires"] is not None and time.monotonic() >= entry["expires"]:
-        _slug_cache.pop(cache_key, None)
-        return None
-    return entry
+    with _cache_lock:
+        entry = _slug_cache.get(cache_key)
+        if entry is None:
+            return None
+        if entry["expires"] is not None and time.monotonic() >= entry["expires"]:
+            _slug_cache.pop(cache_key, None)
+            return None
+        return entry
 
 
 def _as_lookup(entry: dict) -> SlugLookup:
@@ -654,10 +701,11 @@ def discover_slug(product_name: str) -> SlugLookup:
     entry = {"result": result,
              "expires": None if ttl is None else time.monotonic() + ttl,
              "failed": result is None and unsure}
-    _slug_cache.pop(cache_key, None)                # re-insert so it counts as newest
-    _slug_cache[cache_key] = entry
-    while len(_slug_cache) > SLUG_CACHE_MAX:        # drop the oldest names
-        _slug_cache.pop(next(iter(_slug_cache)), None)
+    with _cache_lock:
+        _slug_cache.pop(cache_key, None)            # re-insert so it counts as newest
+        _slug_cache[cache_key] = entry
+        while len(_slug_cache) > SLUG_CACHE_MAX:    # drop the oldest names
+            _slug_cache.pop(next(iter(_slug_cache)), None)
     return _as_lookup(entry)
 
 
@@ -843,17 +891,31 @@ async def _fetch_all_prices(slug: str, category: str, rates: dict[str, float]) -
 
 
 _SENTINEL = object()  # signals the queue that all results have been produced
+_FAILED   = object()  # signals that the fetch broke off before every country answered
+
+
+def _fetch_failed_payload() -> dict:
+    return {"error": "Something went wrong while fetching prices. Please try again in a few seconds.",
+            "temporary": True, "retryAfterSeconds": 10}
 
 
 def _stream_prices_into_queue(
-    slug: str, category: str, rates: dict[str, float], q: queue.Queue
+    product: str, slug: str, category: str, rates: dict[str, float],
+    q: queue.Queue, slot: Optional[threading.BoundedSemaphore] = None,
 ) -> None:
     """
     Runs in a background thread with its own event loop.
-    Puts each row into `q` as soon as its coroutine completes,
-    then puts _SENTINEL to signal the end.
+    Puts each row into `q` as soon as its coroutine completes. When every
+    country has answered it stores the result set in Cache 3 itself, so the
+    fetch is not wasted if the visitor closed the page part-way. Then it puts
+    _SENTINEL to signal the end (_FAILED if the fetch broke off, so the stream
+    never waits forever) and releases `slot` (its fetch slot).
     """
+    rows: list[dict] = []
+    complete = True             # becomes False if any country failed temporarily
+
     async def _run():
+        nonlocal complete
         connector = _make_connector()
         async with aiohttp.ClientSession(headers=HEADERS, connector=connector) as session:
             tasks = [
@@ -867,10 +929,19 @@ def _stream_prices_into_queue(
             # so q.put() fires for the fastest countries first.
             for coro in asyncio.as_completed(tasks):
                 row = await coro
+                if _pop_transient(row):
+                    complete = False
+                rows.append(row)
                 q.put(row)
-        q.put(_SENTINEL)
-
-    asyncio.run(_run())
+    finished = False
+    try:
+        asyncio.run(_run())
+        _cache_put(slug, _build_payload(product, slug, category, rates, rows), complete)
+        finished = True
+    finally:
+        q.put(_SENTINEL if finished else _FAILED)
+        if slot is not None:
+            slot.release()
 
 
 # ---------------------------------------------------------------------------
@@ -903,24 +974,26 @@ def _cache_put(slug: str, payload: dict, complete: bool) -> int:
     `complete` is False when any country failed for a temporary reason."""
     has_price = any(r.get("available") for r in payload["results"])
     ttl = RESULTS_TTL if (complete and has_price) else RESULTS_TTL_SHORT
-    _results_cache.pop(slug, None)                  # re-insert so it counts as newest
-    _results_cache[slug] = {"ts": time.monotonic(), "ttl": ttl, "payload": payload}
-    while len(_results_cache) > RESULTS_CACHE_MAX:  # drop the oldest result sets
-        _results_cache.pop(next(iter(_results_cache)), None)
+    with _cache_lock:
+        _results_cache.pop(slug, None)              # re-insert so it counts as newest
+        _results_cache[slug] = {"ts": time.monotonic(), "ttl": ttl, "payload": payload}
+        while len(_results_cache) > RESULTS_CACHE_MAX:  # drop the oldest result sets
+            _results_cache.pop(next(iter(_results_cache)), None)
     return ttl
 
 
 def _cache_get(slug: str) -> Optional[tuple[dict, int, int]]:
     """Return (payload, age_seconds, expires_in_seconds) for a live entry, else None."""
-    entry = _results_cache.get(slug)
-    if not entry:
-        return None
-    age = time.monotonic() - entry["ts"]
-    ttl = entry.get("ttl", RESULTS_TTL_SHORT)
-    if age >= ttl:
-        _results_cache.pop(slug, None)              # expired — free the memory
-        return None
-    return entry["payload"], int(age), max(0, int(ttl - age))
+    with _cache_lock:
+        entry = _results_cache.get(slug)
+        if not entry:
+            return None
+        age = time.monotonic() - entry["ts"]
+        ttl = entry.get("ttl", RESULTS_TTL_SHORT)
+        if age >= ttl:
+            _results_cache.pop(slug, None)          # expired — free the memory
+            return None
+        return entry["payload"], int(age), max(0, int(ttl - age))
 
 
 def _with_current_rates(payload: dict, rates: dict[str, float]) -> dict:
@@ -939,6 +1012,21 @@ def _with_current_rates(payload: dict, rates: dict[str, float]) -> dict:
             row = {**row, "usdPrice": round(row["localPrice"] / rate, 2)}
         rows.append(row)
     return {**payload, "rates": rates_for_client(rates), "results": _sorted_results(rows)}
+
+
+def _cached_events(product: str, slug: str, category: str, hit: tuple[dict, int, int]):
+    """SSE events that replay a Cache 3 hit: meta, every row, then done."""
+    payload, age, expires_in = hit
+    payload = _with_current_rates(payload, fetch_exchange_rates())
+    meta = {"product": product, "slug": slug, "category": category,
+            **match_info(product, slug),
+            "total": len(payload["results"]), "cached": True,
+            "ageSeconds": age, "expiresInSeconds": expires_in,
+            "rates": payload.get("rates", {})}
+    yield f"event: meta\ndata: {json.dumps(meta)}\n\n"
+    for row in payload["results"]:
+        yield f"event: result\ndata: {json.dumps(row)}\n\n"
+    yield f"event: done\ndata: {json.dumps({'product': product, 'cached': True})}\n\n"
 
 
 # ---------------------------------------------------------------------------
@@ -981,20 +1069,35 @@ def get_prices():
 
     slug, category = lookup.result
 
-    hit = _cache_get(slug)
-    if hit:                                          # Cache 3 hit
+    def cached_reply(hit):
         payload, age, expires_in = hit
         payload = _with_current_rates(payload, fetch_exchange_rates())
         return jsonify({**payload, "product": product, **match_info(product, slug),
                         "cached": True, "ageSeconds": age, "expiresInSeconds": expires_in})
+
+    hit = _cache_get(slug)
+    if hit:                                          # Cache 3 hit
+        return cached_reply(hit)
 
     if not charged:
         denied = _charge_fetch(client)
         if denied:
             return _limit_response(*denied)
 
-    rates      = fetch_exchange_rates()              # Cache 1
-    all_rows   = asyncio.run(_fetch_all_prices(slug, category, rates))
+    # Wait for a fetch slot (see MAX_PARALLEL_FETCHES).
+    if not _fetch_slots.acquire(timeout=FETCH_SLOT_WAIT):
+        resp = jsonify(_busy_payload())
+        resp.status_code = 503
+        resp.headers["Retry-After"] = "10"
+        return resp
+    try:
+        hit = _cache_get(slug)      # someone may have fetched this product while this request waited
+        if hit:
+            return cached_reply(hit)
+        rates    = fetch_exchange_rates()            # Cache 1
+        all_rows = asyncio.run(_fetch_all_prices(slug, category, rates))
+    finally:
+        _fetch_slots.release()
     failed     = [_pop_transient(r) for r in all_rows]   # strips the marker from every row
 
     payload = _build_payload(product, slug, category, rates, all_rows)
@@ -1046,17 +1149,7 @@ def get_prices_stream():
         # Cache 3 hit — replay stored rows as fast SSE events
         hit = _cache_get(slug)
         if hit:
-            payload, age, expires_in = hit
-            payload = _with_current_rates(payload, fetch_exchange_rates())
-            meta = {"product": product, "slug": slug, "category": category,
-                    **match_info(product, slug),
-                    "total": len(payload["results"]), "cached": True,
-                    "ageSeconds": age, "expiresInSeconds": expires_in,
-                    "rates": payload.get("rates", {})}
-            yield f"event: meta\ndata: {json.dumps(meta)}\n\n"
-            for row in payload["results"]:
-                yield f"event: result\ndata: {json.dumps(row)}\n\n"
-            yield f"event: done\ndata: {json.dumps({'product': product, 'cached': True})}\n\n"
+            yield from _cached_events(product, slug, category, hit)
             return
 
         if not charged:
@@ -1065,44 +1158,56 @@ def get_prices_stream():
                 yield f"event: error\ndata: {json.dumps(_limit_payload(*denied))}\n\n"
                 return
 
-        rates    = fetch_exchange_rates()            # Cache 1
+        # Wait for a fetch slot (see MAX_PARALLEL_FETCHES).
+        got_slot = yield from _wait_for_fetch_slot()
+        if not got_slot:
+            yield f"event: error\ndata: {json.dumps(_busy_payload())}\n\n"
+            return
 
-        meta = {"product": product, "slug": slug, "category": category,
-                **match_info(product, slug),
-                "total": len(COUNTRIES), "rates": rates_for_client(rates)}
+        # This generator holds the slot now. Nothing below yields until the
+        # background thread has taken it over, so closing the page cannot leave
+        # it held; anything that fails before then gives it back.
+        hit = _cache_get(slug)      # someone may have fetched this product while this search waited
+        if hit:
+            _fetch_slots.release()
+            yield from _cached_events(product, slug, category, hit)
+            return
+        try:
+            rates = fetch_exchange_rates()           # Cache 1
+            meta  = {"product": product, "slug": slug, "category": category,
+                     **match_info(product, slug),
+                     "total": len(COUNTRIES), "rates": rates_for_client(rates)}
+
+            # ── Queue bridge ─────────────────────────────────────────────────
+            # A background thread runs the asyncio event loop and puts each row
+            # into `q` as soon as its coroutine resolves.  This generator pulls
+            # from `q` immediately — Flask flushes each SSE event to the client
+            # without waiting for all 50 countries to finish. The thread stores
+            # the finished set in Cache 3 and releases the fetch slot.
+            q = queue.Queue()
+            t = threading.Thread(
+                target=_stream_prices_into_queue,
+                args=(product, slug, category, rates, q, _fetch_slots),
+                daemon=True,
+            )
+            t.start()
+        except BaseException:
+            _fetch_slots.release()
+            raise
+
         yield f"event: meta\ndata: {json.dumps(meta)}\n\n"
-
-        # ── Queue bridge ─────────────────────────────────────────────────────
-        # A background thread runs the asyncio event loop and puts each row
-        # into `q` as soon as its coroutine resolves.  This generator pulls
-        # from `q` immediately — Flask flushes each SSE event to the client
-        # without waiting for all 50 countries to finish.
-        q        = queue.Queue()
-        all_rows = []
-        complete = True             # becomes False if any country failed temporarily
-
-        t = threading.Thread(
-            target=_stream_prices_into_queue,
-            args=(slug, category, rates, q),
-            daemon=True,
-        )
-        t.start()
 
         while True:
             row = q.get()           # blocks only until the next country finishes
-            if row is _SENTINEL:
+            if row is _SENTINEL or row is _FAILED:
                 break
-            if _pop_transient(row):
-                complete = False
-            all_rows.append(row)
             yield f"event: result\ndata: {json.dumps(row)}\n\n"
 
-        t.join()
+        t.join()                    # the results are in Cache 3 and the slot is free
 
-        # Store in Cache 3
-        payload = _build_payload(product, slug, category, rates, all_rows)
-        _cache_put(slug, payload, complete)
-
+        if row is _FAILED:          # nothing was cached; the visitor is told to try again
+            yield f"event: error\ndata: {json.dumps(_fetch_failed_payload())}\n\n"
+            return
         yield f"event: done\ndata: {json.dumps({'product': product})}\n\n"
 
     return Response(
@@ -1163,14 +1268,17 @@ def cache_status():
         body["details"] = "hidden — send the admin token to see search terms and product slugs"
         return jsonify(body)
 
-    body["slug_cache"]["keys"] = list(_slug_cache.keys())
+    with _cache_lock:
+        slug_keys = list(_slug_cache.keys())
+        results   = list(_results_cache.items())
+    body["slug_cache"]["keys"] = slug_keys
     body["results_cache"]["slugs"] = {
         slug: {
             "age_seconds": round(now - v["ts"]),
             "ttl_seconds": v.get("ttl", RESULTS_TTL_SHORT),
             "expires_in":  max(0, round(v.get("ttl", RESULTS_TTL_SHORT) - (now - v["ts"]))),
         }
-        for slug, v in list(_results_cache.items())
+        for slug, v in results
     }
     # How this server identified you — use it to confirm visitors are told apart correctly.
     body["you"] = {"address": client, "identified_by": source}
