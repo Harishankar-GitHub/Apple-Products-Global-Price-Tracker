@@ -1318,6 +1318,12 @@ footer a { color: var(--accent); text-decoration: none; }
       $("progressLabel").textContent = `Resolving "${query}" on apple.com…`;
     });
 
+    // The server is fetching other visitors' searches; this one starts when one finishes.
+    es.addEventListener("queued", () => {
+      stopWaitingForServer();
+      $("progressLabel").textContent = "Busy with other searches — yours starts in a moment…";
+    });
+
     es.addEventListener("meta", e => {
       stopWaitingForServer();
       const meta = JSON.parse(e.data);
