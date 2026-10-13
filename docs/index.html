@@ -164,25 +164,32 @@ header {
   font-size: 16px; background: transparent; color: var(--text); min-width: 0;
 }
 .search-box input::placeholder { color: var(--muted); }
-.clear-btn {
-  display: none; align-items: center; justify-content: center;
-  width: 20px; height: 20px; border-radius: 50%;
-  background: var(--muted); border: none; cursor: pointer;
-  color: var(--surface); font-size: 11px; font-weight: 700;
-  flex-shrink: 0; align-self: center; opacity: .7;
-  transition: opacity .15s;
-}
-.clear-btn:hover { opacity: 1; }
-.search-box button {
+.search-btn {
   background: var(--accent); color: #fff; border: none;
   border-radius: 44px; padding: 10px 22px;
   font-size: 15px; font-weight: 600; cursor: pointer;
   white-space: nowrap; transition: background .15s, transform .1s;
   flex-shrink: 0;
 }
-.search-box button:hover  { background: var(--accent-h); }
-.search-box button:active { transform: scale(.97); }
-.search-box button:disabled { opacity: .5; cursor: not-allowed; }
+.search-btn:hover  { background: var(--accent-h); }
+.search-btn:active { transform: scale(.97); }
+.search-btn:disabled { opacity: .5; cursor: not-allowed; }
+/* ✕ — a small grey circle inside a larger, invisible target that is easy to hit */
+.clear-btn {
+  display: none; align-items: center; justify-content: center;
+  width: 32px; height: 32px; margin: 0 -5px; padding: 0;
+  background: none; border: none; border-radius: 50%; cursor: pointer;
+  flex-shrink: 0; align-self: center;
+}
+.clear-btn span {
+  display: flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 50%;
+  background: var(--muted); color: var(--surface);
+  font-size: 11px; font-weight: 700; line-height: 1;
+  opacity: .7; transition: opacity .15s;
+}
+.clear-btn:hover span, .clear-btn:focus-visible span { opacity: 1; }
+.clear-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
 
 /* ─── Chips ──────────────────────────────────────────────────────────────── */
 .suggestions {
@@ -623,7 +630,7 @@ footer a { color: var(--accent); text-decoration: none; }
 /* ─── Responsive ─────────────────────────────────────────────────────────── */
 @media (max-width: 700px) {
   .search-box { padding: 5px 5px 5px 14px; }
-  .search-box button { padding: 9px 16px; font-size: 14px; }
+  .search-btn { padding: 9px 16px; font-size: 14px; }
   td, th { padding: 10px 10px; }
   .hide-mobile   { display: none !important; }
   .hide-mobile-s { display: none !important; }  /* rank col on very small */
@@ -688,8 +695,8 @@ footer a { color: var(--accent); text-decoration: none; }
            autocomplete="off" spellcheck="false" aria-label="Product name"
            role="combobox" aria-autocomplete="list" aria-expanded="false"
            aria-controls="suggestList" />
-    <button class="clear-btn" id="clearBtn" type="button" aria-label="Clear search" onclick="clearInput()">✕</button>
-    <button id="searchBtn" type="button" onclick="search()">Search</button>
+    <button class="clear-btn" id="clearBtn" type="button" aria-label="Clear search" onclick="clearInput()"><span aria-hidden="true">✕</span></button>
+    <button class="search-btn" id="searchBtn" type="button" onclick="search()">Search</button>
     <ul class="suggest-list" id="suggestList" role="listbox" aria-label="Product suggestions" hidden></ul>
   </div>
 
