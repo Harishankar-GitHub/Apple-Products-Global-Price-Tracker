@@ -187,6 +187,8 @@ Blocking JSON endpoint. Waits for all countries to finish, then returns the full
 
 Results: available countries sorted cheapest-first, then unavailable countries alphabetically.
 
+**No exchange rate.** If the exchange-rate service leaves a currency out (or sends a value that is not a positive number), that country is still listed with its own price, but `usdPrice` is `null` and it comes after the converted ones. It is never converted to $0.00. The page shows "No exchange rate" next to its price and does not rank it, chart it or count it as the cheapest. The summary, footer and CSV export say which countries this applies to. If the service is down altogether, every store's own price is shown and the page says prices can't be compared right now.
+
 ---
 
 ### `GET /api/health`
@@ -311,7 +313,7 @@ On a cache hit for price results, the SSE stream replays cached rows as rapid-fi
 
 Price results are kept for 6 hours (`RESULTS_TTL` in `api/app.py`) because Apple changes prices rarely. Two safeguards go with the long lifetime:
 
-- **Incomplete fetches are not kept for long.** If any country failed for a temporary reason (timeout, network error, rate limit, server error), or no country returned a price at all, the result set is kept for only 5 minutes (`RESULTS_TTL_SHORT`) so it is retried soon. A clean "not sold in this country" (404) does not count as a failure.
+- **Incomplete fetches are not kept for long.** If any country failed for a temporary reason (timeout, network error, rate limit, server error), any store's currency had no exchange rate, or no country returned a price at all, the result set is kept for only 5 minutes (`RESULTS_TTL_SHORT`) so it is retried soon. A clean "not sold in this country" (404) does not count as a failure.
 - **Currency conversion does not age with the cache.** On a cache hit the USD prices and the `rates` table are recalculated from the current exchange rates (themselves refreshed every 30 min); only the local prices come from the cache.
 
 The page shows how old cached prices are ("⚡ cached · prices from 2 h 5 min ago").
@@ -393,7 +395,7 @@ A page can also contain smaller numbers that are not the price — a monthly ins
 
 Each store's price is in its own currency, so the minimum is converted with the current exchange rate before comparing (`local_min_price`), and applied with 20% room under it (`PRICE_FLOOR_SLACK`) for stores that price a product below the US price. For an iPhone that is $400 in the US, about 124 KWD in Kuwait and ₹33,600 in India.
 
-Comparing the dollar figure directly, as before, went wrong in both directions: a real iPhone price of 245 KWD was rejected because 245 < 500, and an instalment of ₹6,908 a month was accepted because 6908 > 500. If a currency has no exchange rate the dollar figure is used unchanged.
+Comparing the dollar figure directly, as before, went wrong in both directions: a real iPhone price of 245 KWD was rejected because 245 < 500, and an instalment of ₹6,908 a month was accepted because 6908 > 500. If a currency has no exchange rate the dollar figure is used unchanged, and the result set is kept for only 5 minutes so it is checked again once rates are back.
 
 ---
 

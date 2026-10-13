@@ -449,11 +449,27 @@ def fetch_exchange_rates() -> dict[str, float]:
     return asyncio.run(_async_fetch_rates())
 
 
+def usd_rate(rates: dict[str, float], currency: str) -> Optional[float]:
+    """
+    Units of `currency` per 1 USD, or None when there is no usable rate: the
+    currency is missing (the exchange-rate service is down or leaves it out) or
+    the value is not a positive number. A price without a rate is sent as
+    listed with usdPrice null, so it is never converted to $0.00 (or less) and
+    ranked as the cheapest.
+    """
+    rate = (rates or {}).get(currency)
+    if isinstance(rate, bool) or not isinstance(rate, (int, float)):
+        return None
+    if not math.isfinite(rate) or rate <= 0:
+        return None
+    return float(rate)
+
+
 def rates_for_client(rates: dict[str, float]) -> dict[str, float]:
     """Subset of exchange rates (units per 1 USD) for the currencies we list.
     Sent to the browser so it can show prices in the visitor's own currency."""
     wanted = {currency for (_prefix, currency, _symbol) in COUNTRIES.values()}
-    return {c: rates[c] for c in sorted(wanted) if rates.get(c)}
+    return {c: rates[c] for c in sorted(wanted) if usd_rate(rates, c)}
 
 
 # ---------------------------------------------------------------------------
@@ -770,8 +786,8 @@ def local_min_price(slug: str, currency: str, rates: dict[str, float]) -> float:
     is how every store was checked before; such a row cannot be ranked anyway.
     """
     floor_usd = get_min_price(slug)
-    rate = 1.0 if currency == "USD" else (rates.get(currency) or 0)
-    if not rate or rate <= 0:
+    rate = 1.0 if currency == "USD" else usd_rate(rates, currency)
+    if not rate:
         return floor_usd
     return floor_usd * rate * PRICE_FLOOR_SLACK
 
@@ -811,6 +827,11 @@ async def _fetch_price_async(
     rates: dict[str, float],
 ) -> dict:
     min_price = local_min_price(slug, currency, rates)    # floor in this store's currency
+    # No exchange rate for this store's currency: its price cannot be converted
+    # (it is sent as listed, unranked) and the floor above could only be applied
+    # in dollars. Its row is marked like a temporary failure, so the result set
+    # is kept for minutes rather than hours and fetched again once rates are back.
+    no_rate   = usd_rate(rates, currency) is None
     shop_url  = build_shop_url(prefix, category, slug)
     prod_url  = build_product_url(prefix, slug)
     flag      = COUNTRY_FLAGS.get(country, "🏳")
@@ -851,18 +872,18 @@ async def _fetch_price_async(
                     "reason": "Not available in this country", "url": prod_url}
         row = {"country": country, "flag": flag, "available": False,
                "reason": "Price not found", "url": prod_url}
-        if "error" in (shop_outcome, prod_outcome):
+        if "error" in (shop_outcome, prod_outcome) or no_rate:
             # Internal marker, removed before the row is sent or cached
             # (see _pop_transient): this "no price" may be temporary.
             row["_transient"] = True
         return row
 
-    rate      = rates.get(currency, 0)
-    usd_price = round(price_val / rate, 2) if rate else None
+    rate      = usd_rate(rates, currency)
+    usd_price = (round(price_val / rate, 2) or None) if rate else None   # never 0.00
     price_str = (f"{symbol}{price_val:,.0f}" if price_val >= 1000
                  else f"{symbol}{price_val:,.2f}")
 
-    return {
+    row = {
         "country":             country,
         "flag":                flag,
         "available":           True,
@@ -870,9 +891,12 @@ async def _fetch_price_async(
         "symbol":              symbol,
         "localPrice":          price_val,
         "localPriceFormatted": price_str,
-        "usdPrice":            usd_price,
+        "usdPrice":            usd_price,     # null: no exchange rate, so not ranked
         "url":                 prod_url,
     }
+    if usd_price is None:
+        row["_transient"] = True               # see no_rate above
+    return row
 
 
 async def _fetch_all_prices(slug: str, category: str, rates: dict[str, float]) -> list[dict]:
@@ -954,9 +978,9 @@ def _pop_transient(row: dict) -> bool:
 
 
 def _sorted_results(rows: list[dict]) -> list[dict]:
-    """Available countries cheapest-first, then unavailable ones A→Z."""
-    available   = sorted([r for r in rows if     r.get("available")],
-                         key=lambda r: r.get("usdPrice") or 999999)
+    """Available countries cheapest-first (any without a USD price after them), then unavailable ones A→Z."""
+    available   = sorted([r for r in rows if     r.get("available")],     # no USD price: after the rest
+                         key=lambda r: (r.get("usdPrice") is None, r.get("usdPrice") or 0, r["country"]))
     unavailable = sorted([r for r in rows if not r.get("available")],
                          key=lambda r: r["country"])
     return available + unavailable
@@ -1007,9 +1031,9 @@ def _with_current_rates(payload: dict, rates: dict[str, float]) -> dict:
         return payload
     rows = []
     for row in payload["results"]:
-        rate = rates.get(row.get("currency"), 0) if row.get("available") else 0
+        rate = usd_rate(rates, row.get("currency")) if row.get("available") else None
         if rate:
-            row = {**row, "usdPrice": round(row["localPrice"] / rate, 2)}
+            row = {**row, "usdPrice": round(row["localPrice"] / rate, 2) or None}
         rows.append(row)
     return {**payload, "rates": rates_for_client(rates), "results": _sorted_results(rows)}
 

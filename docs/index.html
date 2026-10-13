@@ -1024,16 +1024,20 @@ footer a { color: var(--accent); text-decoration: none; }
     const cur  = activeCurrency();
     const rate = rateFor(cur) || 1;
     const items = allResults.map(r => {
-      const usd = r.available && isNum(r.usdPrice) ? r.usdPrice : null;   // price as listed
+      // USD price as listed. Without a (positive) conversion a price cannot be
+      // compared, so it is shown as listed but never ranked — never as $0.00.
+      const usd = r.available && isNum(r.usdPrice) && r.usdPrice > 0 ? r.usdPrice : null;
       return { r, c: info(r.country), usd, value: usd === null ? null : usd * rate,
                pinned: prefs.pinned.includes(r.country), isHome: r.country === prefs.home };
     });
     const priced = items.filter(i => i.value !== null).sort((a, b) => a.value - b.value);
     priced.forEach((i, idx) => { i.rank = idx + 1; });
+    const listed      = items.filter(i => i.r.available);       // every country with a price
+    const unconverted = listed.filter(i => i.value === null);   // …of which these have no exchange rate
 
     const cheapest = priced[0] || null;
     const priciest = priced[priced.length - 1] || null;
-    const home     = priced.find(i => i.isHome) || null;
+    const home     = listed.find(i => i.isHome) || null;
 
     items.forEach(i => {
       i.isCheapest = !!cheapest && i.value !== null && i.value === cheapest.value;
@@ -1044,7 +1048,7 @@ footer a { color: var(--accent); text-decoration: none; }
         i.diff = i.diffPct = null;
       }
     });
-    return { items, priced, cheapest, priciest, home, cur, wantedCur: displayCurrency() };
+    return { items, priced, listed, unconverted, cheapest, priciest, home, cur, wantedCur: displayCurrency() };
   }
 
   function visibleItems(view) {
@@ -1515,21 +1519,40 @@ footer a { color: var(--accent); text-decoration: none; }
   }
 
   function updateSummary(view) {
-    if (!view.priced.length) {
+    if (!view.listed.length) {
       if (activeSource === null) animateStat("summaryFound", "0");   // finished, nothing priced
       return;
     }
-    const line = i => `${i.r.flag} ${i.r.country} — ${fmtMoney(i.value, view.cur)}`;
+    // A price with no exchange rate is shown as listed, in its own currency.
+    const line = i => i.value === null
+      ? `${i.r.flag} ${i.r.country} — ${i.r.localPriceFormatted} · no exchange rate`
+      : `${i.r.flag} ${i.r.country} — ${fmtMoney(i.value, view.cur)}`;
 
-    animateStat("summaryFound",    String(view.priced.length));
-    animateStat("summaryCheapest", line(view.cheapest));
-    animateStat("summaryMostExp",  line(view.priciest));
+    animateStat("summaryFound",    String(view.listed.length));
+    animateStat("summaryCheapest", view.cheapest ? line(view.cheapest) : "—");
+    animateStat("summaryMostExp",  view.priciest ? line(view.priciest) : "—");
     animateStat("summaryHome", view.home ? line(view.home) : `${prefs.home} — no price`);
 
     const notes = [];
-    if (view.cur !== view.wantedCur)
-      notes.push(`No exchange rate for ${view.wantedCur} yet — showing USD.`);
+    if (!view.priced.length) {
+      if (activeSource === null)
+        notes.push("Exchange rates are unavailable right now, so prices can't be compared or ranked. " +
+                   "Each store's own price is shown.");
+    } else {
+      if (view.cur !== view.wantedCur)
+        notes.push(`No exchange rate for ${view.wantedCur} yet — showing USD.`);
+      if (view.unconverted.length) notes.push(unrankedNote(view.unconverted));
+    }
     $("summaryNote").textContent = notes.join(" ");
+  }
+
+  // "No exchange rate for India, so it is not ranked." (several: "India and Brazil, so they are…")
+  function unrankedNote(list) {
+    const names = list.map(i => i.r.country);
+    const who = names.length === 1 ? names[0]
+      : names.length <= 3 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
+      : `${names.length} countries (${names.slice(0, 3).join(", ")}…)`;
+    return `No exchange rate for ${who}, so ${names.length === 1 ? "it is" : "they are"} not ranked.`;
   }
 </script>
 
@@ -1633,7 +1656,7 @@ footer a { color: var(--accent); text-decoration: none; }
       $("chartView").style.display = "none";
       $("chartView").innerHTML = "";
       $("results").style.display = "";
-      if (rows.length) renderTable(view, rows); else showNoPrices();
+      if (rows.length || view.listed.length) renderTable(view, rows); else showNoPrices();
       return;
     }
 
@@ -1754,11 +1777,14 @@ footer a { color: var(--accent); text-decoration: none; }
       } else {
         const noPrice = allResults.filter(r => !r.available).length;
         const showing = rows.filter(i => i.r.available).length;
-        const scope   = showing === view.priced.length
-          ? `${view.priced.length} prices found`
-          : `Showing ${showing} of ${view.priced.length} prices`;
+        const total   = view.listed.length;
+        const scope   = showing === total
+          ? `${total} prices found`
+          : `Showing ${showing} of ${total} prices`;
+        const unranked = view.unconverted.length
+          ? ` · ${view.unconverted.length} without an exchange rate (not ranked)` : "";
         footer.textContent =
-          `${scope} · ${noPrice} countries without a price · Base/entry model` +
+          `${scope}${unranked} · ${noPrice} countries without a price · Base/entry model` +
           (fetchedAt ? ` · Updated ${Date.now() - fetchedAt < 60000
             ? "just now" : fmtDuration(Date.now() - fetchedAt) + " ago"}` : "");
       }
@@ -1769,6 +1795,7 @@ footer a { color: var(--accent); text-decoration: none; }
   function renderChart(view, rows) {
     const el = $("chartView");
     const items = rows.filter(i => i.value !== null);
+    const left  = rows.filter(i => i.r.available && i.value === null);   // priced, but no exchange rate
     if (!items.length || !view.cheapest) {
       // Filters hide every priced country, or no price has arrived yet.
       el.innerHTML = view.priced.length
@@ -1811,7 +1838,8 @@ footer a { color: var(--accent); text-decoration: none; }
           <div class="chart-title">Extra cost vs the cheapest (${esc(cheapestName)})</div>
         </div>
         <div class="chart-rows" role="list" aria-label="Extra cost over the cheapest price, by country">${bars}</div>
-        <p class="chart-foot">${items.length} countries · listed prices converted to ${esc(view.cur)}</p>
+        <p class="chart-foot">${items.length} countries · listed prices converted to ${esc(view.cur)}${
+          left.length ? ` · not shown, no exchange rate: ${esc(left.map(i => i.r.country).join(", "))}` : ""}</p>
       </div>`;
   }
 
@@ -1880,10 +1908,10 @@ footer a { color: var(--accent); text-decoration: none; }
       i.r.available ? i.r.currency : (i.c ? i.c.cur : ""),
       i.r.available ? i.r.localPrice : "",
       round2(i.value),
-      i.r.available ? round2(i.r.usdPrice) : "",
+      i.r.available ? round2(i.usd) : "",              // null (empty) when there is no usable rate
       round2(i.diff),
       isNum(i.diffPct) ? Math.round(i.diffPct * 10) / 10 : "",
-      i.r.available ? "Available" : (i.r.reason || "Unavailable"),
+      i.r.available ? (i.value === null ? "Available (no exchange rate)" : "Available") : (i.r.reason || "Unavailable"),
       safeUrl(i.r.url),
     ]);
     return [header, ...lines].map(l => l.map(csvCell).join(",")).join("\r\n") + "\r\n";
