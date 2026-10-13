@@ -46,7 +46,10 @@ Regions and the autocomplete product list are static tables at the top of the sc
 ```
 apple-global-price-tracker/
 ├── docs/
-│   └── index.html          # Single-file frontend (HTML + CSS + JS)
+│   ├── index.html          # Single-file frontend (HTML + CSS + JS)
+│   └── og.png              # Image shown when a link to the site is shared
+├── assets/
+│   └── og-image.html       # Source of og.png
 ├── api/
 │   ├── app.py              # Flask API — async price fetching + SSE streaming
 │   ├── gunicorn.conf.py    # Server settings: threads and timeouts
@@ -91,6 +94,14 @@ Comment out the production line for local development, uncomment before pushing.
 3. Click **Save**
 
 Your site: `https://<your-username>.github.io/<repo-name>/`
+
+**Link previews.** When a link to the site is shared (WhatsApp, Slack, X, LinkedIn, iMessage…), the preview shows `docs/og.png`. Link previewers need the image's full address, so `og:image` in `docs/index.html` names this site's address on GitHub Pages; if you deploy your own copy, change it to `https://<your-username>.github.io/<repo-name>/og.png`. To change the picture, edit `assets/og-image.html` and save a 1200 × 630 screenshot of it over `docs/og.png`:
+
+```bash
+npx playwright screenshot --viewport-size "1200,630" assets/og-image.html docs/og.png
+```
+
+Apps keep a copy of a preview once they have shown it, so a link shared before a change can keep its old preview for a while. Facebook's [Sharing Debugger](https://developers.facebook.com/tools/debug/) and LinkedIn's [Post Inspector](https://www.linkedin.com/post-inspector/) can fetch it again.
 
 ---
 
