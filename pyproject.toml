@@ -1,0 +1,24 @@
+# Tooling only: the API is deployed from api/ with api/requirements.txt.
+
+[tool.pytest.ini_options]
+testpaths = ["tests/api"]
+pythonpath = ["api", "tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+markers = [
+    "server: starts a real gunicorn server (slower, a few seconds each)",
+]
+xfail_strict = true
+filterwarnings = ["error"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = ["node_modules"]
+
+[tool.ruff.lint]
+# Pyflakes (unused imports, undefined names…), pycodestyle errors and bugbear.
+# Not enforced, to keep app.py's deliberate style: aligned assignments
+# (E2xx, not selected), one-line `if …: return …` tables (E701) and zip()
+# without strict= (B905). No formatter is enforced for the same reason.
+select = ["F", "E4", "E7", "E9", "B"]
+ignore = ["E701", "B905"]
