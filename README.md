@@ -55,6 +55,16 @@ apple-global-price-tracker/
 │   ├── gunicorn.conf.py    # Server settings: threads and timeouts
 │   ├── requirements.txt
 │   └── render.yaml         # Render deployment config
+├── tests/
+│   ├── api/                # API tests (pytest)
+│   ├── browser/            # Page and end-to-end tests (Playwright)
+│   ├── fakes/apple.py      # Stand-in for apple.com and the exchange-rate service
+│   └── servers/fake_api.py # The API with apple.com faked, for gunicorn and browser tests
+├── .github/                # CI workflow and Dependabot settings
+├── pyproject.toml          # pytest and ruff settings
+├── requirements-dev.txt    # Test and lint tools
+├── package.json            # Playwright (browser tests)
+├── playwright.config.js
 └── README.md
 ```
 
@@ -118,6 +128,31 @@ python app.py
 
 Open `docs/index.html` directly in a browser or with VS Code Live Server.  
 Make sure `API_BASE` in the HTML points to `http://localhost:5000`.
+
+---
+
+## Tests
+
+The tests never contact apple.com: `tests/fakes/apple.py` stands in for it (and for the exchange-rate service), with switches for timeouts, outages, missing rates, retired products and so on.
+
+| Suite | What it covers | Run it |
+|-------|----------------|--------|
+| API (`tests/api`, pytest) | Prices and the sanity floor, product look-up, caches, exchange rates, rate limits, the private status page, serving visitors in parallel, and a real gunicorn server with the production settings | `pytest` |
+| Page (`tests/browser`, Playwright) | The page with the server's events played by the test: progress and wake-up messages, ranking and differences, sorting and filters, table and chart, links and history, the search box, CSV export, link previews | `npx playwright test` |
+| End to end (`tests/browser/end-to-end.spec.js`) | The real page against the real API under gunicorn, with only apple.com faked | part of `npx playwright test` |
+
+```bash
+pip install -r requirements-dev.txt     # the API's packages plus pytest and ruff
+pytest                                  # API tests (about 30 s)
+ruff check .                            # lint
+
+npm install                             # Playwright
+npx playwright install chromium
+npx playwright test                     # page and end-to-end tests; starts the servers it needs
+npx playwright show-report              # after a failure: screenshots and a trace of each step
+```
+
+GitHub Actions runs lint, the API tests and the browser tests on every pull request and on every push to `main` (`.github/workflows/ci.yml`); a pull request shows a ✓ or ✗ for each. Dependabot opens a weekly pull request when a pinned package or action has a newer version.
 
 ---
 
