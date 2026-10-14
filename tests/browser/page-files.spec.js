@@ -1,5 +1,6 @@
 // How the page is put together: a stylesheet and JavaScript modules in docs/, no inline
-// script, and every module preloaded so the browser fetches them all at once.
+// script, every module preloaded so the browser fetches them all at once, and the
+// countries taken from the table the API uses.
 const fs = require('fs');
 const path = require('path');
 const { test, expect } = require('./support/fixtures');
@@ -48,4 +49,14 @@ test('works under a Content-Security-Policy that allows only its own scripts', a
   await page.click('#results th[data-sort="country-asc country-desc"]');
   await expect(page.locator('#results tbody tr[data-key]').first()).toHaveAttribute('data-key', 'Australia');
   // A script blocked by the policy would be reported as a page error, which fails the test.
+});
+
+test('the countries are the API\'s: home countries, currencies and regions come from api/tracker/countries.json', async ({ page }) => {
+  const table = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../api/tracker/countries.json'), 'utf8'));
+  await page.goto('/');
+  const options = sel => page.locator(`${sel} option`).evaluateAll(os => os.map(o => o.value));
+  expect(await options('#homeSelect')).toEqual(table.countries.map(c => c.name).sort((a, b) => a.localeCompare(b)));
+  expect((await options('#currencySelect')).slice(1)).toEqual([...new Set(table.countries.map(c => c.currency))].sort());
+  expect(await page.locator('#regionChips [data-region]').evaluateAll(bs => bs.map(b => b.dataset.region)))
+    .toEqual(['all', ...table.regions]);
 });

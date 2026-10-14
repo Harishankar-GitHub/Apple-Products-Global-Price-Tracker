@@ -1,74 +1,31 @@
 """
-The Apple stores searched: country → (URL prefix, currency, currency symbol),
-and each country's flag. The page (docs/index.html) has its own copy of the
-country list for regions and names, so a store added here is added there too.
+The Apple stores searched, read from countries.json next to this file: the one
+table of countries for the whole project. The page gets the same table as
+docs/js/countries.js, which scripts/sync_countries.py writes from it (a test
+checks the two match). To add or change a store, edit countries.json and run
+that script.
+
+Each country: name, ISO code (for its flag, and on the page to guess a
+visitor's home country), region, the store's URL prefix on apple.com ("" is
+the US store), currency and currency symbol.
 """
+import json
+import pathlib
 
+TABLE_FILE = pathlib.Path(__file__).with_name("countries.json")
+_table = json.loads(TABLE_FILE.read_text(encoding="utf-8"))
+
+
+def flag(code: str) -> str:
+    """The flag emoji for an ISO country code: "IE" → 🇮🇪 (two regional-indicator letters)."""
+    return "".join(chr(0x1F1E6 + ord(letter) - ord("A")) for letter in code.upper())
+
+
+REGIONS: list[str] = _table["regions"]
+
+# country → (URL prefix, currency, currency symbol)
 COUNTRIES: dict[str, tuple[str, str, str]] = {
-    "United States":        ("",    "USD", "$"),
-    "Japan":                ("jp",  "JPY", "¥"),
-    "Canada":               ("ca",  "CAD", "CA$"),
-    "South Korea":          ("kr",  "KRW", "₩"),
-    "Hong Kong":            ("hk",  "HKD", "HK$"),
-    "Taiwan":               ("tw",  "TWD", "NT$"),
-    "United Arab Emirates": ("ae",  "AED", "AED"),
-    "China":                ("cn",  "CNY", "¥"),
-    "Philippines":          ("ph",  "PHP", "₱"),
-    "Thailand":             ("th",  "THB", "฿"),
-    "India":                ("in",  "INR", "₹"),
-    "Singapore":            ("sg",  "SGD", "S$"),
-    "Malaysia":             ("my",  "MYR", "RM"),
-    "Australia":            ("au",  "AUD", "A$"),
-    "New Zealand":          ("nz",  "NZD", "NZ$"),
-    "United Kingdom":       ("uk",  "GBP", "£"),
-    "Germany":              ("de",  "EUR", "€"),
-    "France":               ("fr",  "EUR", "€"),
-    "Netherlands":          ("nl",  "EUR", "€"),
-    "Spain":                ("es",  "EUR", "€"),
-    "Italy":                ("it",  "EUR", "€"),
-    "Austria":              ("at",  "EUR", "€"),
-    "Ireland":              ("ie",  "EUR", "€"),
-    "Portugal":             ("pt",  "EUR", "€"),
-    "Sweden":               ("se",  "SEK", "kr"),
-    "Norway":               ("no",  "NOK", "kr"),
-    "Denmark":              ("dk",  "DKK", "kr"),
-    "Poland":               ("pl",  "PLN", "zł"),
-    "Turkey":               ("tr",  "TRY", "₺"),
-    "Mexico":               ("mx",  "MXN", "MX$"),
-    "Brazil":               ("br",  "BRL", "R$"),
-    "Saudi Arabia":         ("sa",  "SAR", "SAR"),
-    "Vietnam":              ("vn",  "VND", "₫"),
-    "Indonesia":            ("id",  "IDR", "Rp"),
-    "Israel":               ("il",  "ILS", "₪"),
-    "South Africa":         ("za",  "ZAR", "R"),
-    "Czech Republic":       ("cz",  "CZK", "Kč"),
-    "Hungary":              ("hu",  "HUF", "Ft"),
-    "Romania":              ("ro",  "RON", "lei"),
-    "Finland":              ("fi",  "EUR", "€"),
-    "Belgium":              ("be",  "EUR", "€"),
-    "Luxembourg":           ("lu",  "EUR", "€"),
-    "Greece":               ("gr",  "EUR", "€"),
-    "Switzerland":          ("ch",  "CHF", "CHF"),
-    "Chile":                ("cl",  "CLP", "CLP"),
-    "Colombia":             ("co",  "COP", "COP"),
-    "Kuwait":               ("kw",  "KWD", "KWD"),
-    "Qatar":                ("qa",  "QAR", "QAR"),
-    "Bahrain":              ("bh",  "BHD", "BHD"),
-    "Oman":                 ("om",  "OMR", "OMR"),
+    c["name"]: (c["store"], c["currency"], c["symbol"]) for c in _table["countries"]
 }
 
-COUNTRY_FLAGS: dict[str, str] = {
-    "United States": "🇺🇸", "Japan": "🇯🇵", "Canada": "🇨🇦", "South Korea": "🇰🇷",
-    "Hong Kong": "🇭🇰", "Taiwan": "🇹🇼", "United Arab Emirates": "🇦🇪", "China": "🇨🇳",
-    "Philippines": "🇵🇭", "Thailand": "🇹🇭", "India": "🇮🇳", "Singapore": "🇸🇬",
-    "Malaysia": "🇲🇾", "Australia": "🇦🇺", "New Zealand": "🇳🇿", "United Kingdom": "🇬🇧",
-    "Germany": "🇩🇪", "France": "🇫🇷", "Netherlands": "🇳🇱", "Spain": "🇪🇸",
-    "Italy": "🇮🇹", "Austria": "🇦🇹", "Ireland": "🇮🇪", "Portugal": "🇵🇹",
-    "Sweden": "🇸🇪", "Norway": "🇳🇴", "Denmark": "🇩🇰", "Poland": "🇵🇱",
-    "Turkey": "🇹🇷", "Mexico": "🇲🇽", "Brazil": "🇧🇷", "Saudi Arabia": "🇸🇦",
-    "Vietnam": "🇻🇳", "Indonesia": "🇮🇩", "Israel": "🇮🇱", "South Africa": "🇿🇦",
-    "Czech Republic": "🇨🇿", "Hungary": "🇭🇺", "Romania": "🇷🇴", "Finland": "🇫🇮",
-    "Belgium": "🇧🇪", "Luxembourg": "🇱🇺", "Greece": "🇬🇷", "Switzerland": "🇨🇭",
-    "Chile": "🇨🇱", "Colombia": "🇨🇴", "Kuwait": "🇰🇼", "Qatar": "🇶🇦",
-    "Bahrain": "🇧🇭", "Oman": "🇴🇲",
-}
+COUNTRY_FLAGS: dict[str, str] = {c["name"]: flag(c["code"]) for c in _table["countries"]}

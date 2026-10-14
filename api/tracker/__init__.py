@@ -11,7 +11,7 @@ Modules, roughly in the order a search uses them:
   exchange       exchange rates, kept for 30 minutes
   prices         reading a price off a store's page, and fetching every store at once
   web            one event loop and connection pool for apple.com
-  countries      the 50 stores: URL prefix, currency, symbol, flag
+  countries      the 50 stores, from countries.json: URL prefix, currency, symbol, flag
   config         every setting, including the environment variables
 """
 from flask import Flask
