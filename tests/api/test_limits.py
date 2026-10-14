@@ -67,17 +67,24 @@ def test_look_ups_per_visitor(server, apple, clock, limits_on):
     assert server.get("prod22", A).status_code == 200
 
 
+PRICES_DROPPED = None          # in a list of searches: the cached prices are dropped (the name stays known)
+
+
 @pytest.mark.parametrize(
     ("searches", "cost"),
     [(["MacBook Air"], 1),                                      # name and prices: one look-up, not two
      (["MacBook Air", "MacBook Air", "macbook air"], 1),        # cached repeats are free
-     (["MacBook Air", "iPhone 17"], 2)],                        # a built-in name still costs one for its prices
-    ids=["new-product", "cached-repeats", "built-in-name"],
+     (["MacBook Air", "iPhone 17"], 2),                         # a built-in name still costs one for its prices
+     (["MacBook Air", PRICES_DROPPED, "MacBook Air"], 2)],      # a known name costs one when its prices are fetched
+    ids=["new-product", "cached-repeats", "built-in-name", "known-name-prices-not-cached"],
 )
 def test_what_a_search_costs(server, limits_on, searches, cost):
     limits_on()
     for name in searches:
-        server.get(name, A)
+        if name is PRICES_DROPPED:
+            results_cache.clear()
+        else:
+            server.get(name, A)
     assert limits.fetch_limiter.count(A) == cost and limits.global_fetch_limiter.count("all") == cost
 
 

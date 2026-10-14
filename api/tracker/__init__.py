@@ -4,6 +4,7 @@ Apple Products Global Price Tracker — the API.
 Modules, roughly in the order a search uses them:
 
   routes         the HTTP endpoints
+  search         one search, start to finish, for both price endpoints
   limits         abuse protection: rate limits, telling visitors apart, the admin token
   lookup         product name → Apple's page for it (its slug), with a cache of answers
   results_cache  finished result sets per product

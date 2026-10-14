@@ -6,15 +6,13 @@ All 50 country requests fire simultaneously in one session on one event loop
 the price, two otherwise.
 """
 import asyncio
-import queue
 import re
-import threading
-from typing import Optional
+from typing import AsyncIterator, NamedTuple, Optional
 from urllib.parse import urlparse
 
 import aiohttp
 
-from . import config, results_cache, web
+from . import config, web
 from .countries import COUNTRIES, COUNTRY_FLAGS
 from .exchange import usd_rate
 
@@ -90,10 +88,17 @@ def build_product_url(prefix: str, slug: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Async price fetching — all 50 countries fire simultaneously
+# Fetching — all 50 stores at once
 # ---------------------------------------------------------------------------
 
-async def _fetch_price_async(
+class StoreRow(NamedTuple):
+    """One store's answer."""
+    row: dict           # what is sent to the page and cached
+    transient: bool     # True: this answer may change soon (Apple failed to answer, or no exchange
+                        # rate), so the result set is kept for minutes rather than hours
+
+
+async def _fetch_store(
     session: aiohttp.ClientSession,
     country: str,
     prefix: str,
@@ -102,12 +107,12 @@ async def _fetch_price_async(
     slug: str,
     category: str,
     rates: dict[str, float],
-) -> dict:
+) -> StoreRow:
     min_price = local_min_price(slug, currency, rates)    # floor in this store's currency
     # No exchange rate for this store's currency: its price cannot be converted
     # (it is sent as listed, unranked) and the floor above could only be applied
-    # in dollars. Its row is marked like a temporary failure, so the result set
-    # is kept for minutes rather than hours and fetched again once rates are back.
+    # in dollars. Its row counts as a temporary failure, so the result set is
+    # kept for minutes rather than hours and fetched again once rates are back.
     no_rate   = usd_rate(rates, currency) is None
     shop_url  = build_shop_url(prefix, category, slug)
     prod_url  = build_product_url(prefix, slug)
@@ -145,15 +150,11 @@ async def _fetch_price_async(
 
     if price_val is None:
         if prod_outcome == "missing":
-            return {"country": country, "flag": flag, "available": False,
-                    "reason": "Not available in this country", "url": prod_url}
-        row = {"country": country, "flag": flag, "available": False,
-               "reason": "Price not found", "url": prod_url}
-        if "error" in (shop_outcome, prod_outcome) or no_rate:
-            # Internal marker, removed before the row is sent or cached
-            # (see pop_transient): this "no price" may be temporary.
-            row["_transient"] = True
-        return row
+            return StoreRow({"country": country, "flag": flag, "available": False,
+                             "reason": "Not available in this country", "url": prod_url}, transient=False)
+        return StoreRow({"country": country, "flag": flag, "available": False,
+                         "reason": "Price not found", "url": prod_url},
+                        transient="error" in (shop_outcome, prod_outcome) or no_rate)
 
     rate      = usd_rate(rates, currency)
     usd_price = (round(price_val / rate, 2) or None) if rate else None   # never 0.00
@@ -171,73 +172,15 @@ async def _fetch_price_async(
         "usdPrice":            usd_price,     # null: no exchange rate, so not ranked
         "url":                 prod_url,
     }
-    if usd_price is None:
-        row["_transient"] = True               # see no_rate above
-    return row
+    return StoreRow(row, transient=usd_price is None)          # see no_rate above
 
 
-async def fetch_all_prices(slug: str, category: str, rates: dict[str, float]) -> list[dict]:
-    """
-    Fire all 50 country requests simultaneously.
-    Used by the non-streaming /api/prices route.
-    """
+async def fetch_every_store(slug: str, category: str, rates: dict[str, float]) -> AsyncIterator[StoreRow]:
+    """Every store's answer, in the order they arrive. All 50 stores are asked at once."""
     async with web.apple_session() as session:
         tasks = [
-            _fetch_price_async(session, country, prefix, currency, symbol,
-                               slug, category, rates)
+            asyncio.ensure_future(_fetch_store(session, country, prefix, currency, symbol, slug, category, rates))
             for country, (prefix, currency, symbol) in COUNTRIES.items()
         ]
-        return await asyncio.gather(*tasks)
-
-
-SENTINEL = object()  # signals the queue that all results have been produced
-FAILED   = object()  # signals that the fetch broke off before every country answered
-
-
-def stream_prices_into_queue(
-    product: str, slug: str, category: str, rates: dict[str, float],
-    q: queue.Queue, slot: Optional[threading.BoundedSemaphore] = None,
-) -> None:
-    """
-    Runs in a background thread with its own event loop.
-    Puts each row into `q` as soon as its coroutine completes. When every
-    country has answered it stores the result set in the results cache itself, so the
-    fetch is not wasted if the visitor closed the page part-way. Then it puts
-    SENTINEL to signal the end (FAILED if the fetch broke off, so the stream
-    never waits forever) and releases `slot` (its fetch slot).
-    """
-    rows: list[dict] = []
-    complete = True             # becomes False if any country failed temporarily
-
-    async def _run():
-        nonlocal complete
-        async with web.apple_session() as session:
-            tasks = [
-                asyncio.ensure_future(
-                    _fetch_price_async(session, country, prefix, currency, symbol,
-                                       slug, category, rates)
-                )
-                for country, (prefix, currency, symbol) in COUNTRIES.items()
-            ]
-            # as_completed yields each future the moment it finishes —
-            # so q.put() fires for the fastest countries first.
-            for coro in asyncio.as_completed(tasks):
-                row = await coro
-                if pop_transient(row):
-                    complete = False
-                rows.append(row)
-                q.put(row)
-    finished = False
-    try:
-        asyncio.run(_run())
-        results_cache.put(slug, results_cache.build_payload(product, slug, category, rates, rows), complete)
-        finished = True
-    finally:
-        q.put(SENTINEL if finished else FAILED)
-        if slot is not None:
-            slot.release()
-
-
-def pop_transient(row: dict) -> bool:
-    """Strip the internal marker from a row; True if the row failed temporarily."""
-    return bool(row.pop("_transient", False))
+        for next_done in asyncio.as_completed(tasks):   # the fastest stores first
+            yield await next_done

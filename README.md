@@ -54,7 +54,7 @@ apple-global-price-tracker/
 │   ├── app.py              # Entry point that gunicorn loads (app:app)
 │   ├── tracker/            # The Flask API
 │   │   ├── routes.py       #   HTTP endpoints
-│   │   ├── search.py       #   Fetch slots and the messages a search can end with
+│   │   ├── search.py       #   One search, start to finish, for both price endpoints
 │   │   ├── limits.py       #   Rate limits, telling visitors apart, the admin token
 │   │   ├── lookup.py       #   Product name → Apple's page for it, with its cache
 │   │   ├── prices.py       #   Reading a price off a page; fetching all 50 stores at once
@@ -194,6 +194,15 @@ curl -N "https://apple-products-global-price-tracker.onrender.com/api/prices/str
 ### `GET /api/prices?product=<name>`
 
 Blocking JSON endpoint. Waits for all countries to finish, then returns the full sorted result set. Useful for scripting/automation.
+
+It runs the same search as the stream, so it makes the same checks and ends with the same messages. An error is `{ "error": "message" }` with these statuses:
+
+| Status | When | Also in the body |
+|--------|------|------------------|
+| `400` | The `product` parameter is missing or longer than 80 characters | |
+| `404` | Apple has no page for the product | |
+| `429` | A rate limit was hit | `rateLimited: true`, `retryAfterSeconds` (also sent as `Retry-After`) |
+| `503` | Apple did not answer the look-up, no fetch slot came free in time, or the fetch broke off part-way | `temporary: true`, `retryAfterSeconds` (also sent as `Retry-After`) |
 
 **Example response:**
 ```json
@@ -464,7 +473,7 @@ Comparing the dollar figure directly, as before, went wrong in both directions: 
 | Backend | Python 3.11 · Flask · aiohttp |
 | Async | `asyncio` + `aiohttp` — all 50 country requests fire simultaneously |
 | Streaming | Server-Sent Events (SSE) via Flask `stream_with_context` |
-| Bridge | `queue.Queue` + background thread bridges async → sync SSE generator |
+| Bridge | `queue.Queue` + background thread bridges async → sync; both price endpoints read the same search (`api/tracker/search.py`) |
 | Hosting | GitHub Pages (frontend) · Render free tier (backend) |
 | Exchange rates | [open.er-api.com](https://open.er-api.com) |
 

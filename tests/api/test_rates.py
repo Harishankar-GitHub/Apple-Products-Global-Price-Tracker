@@ -51,7 +51,6 @@ def test_currency_missing_from_the_rate_service(server, apple, via):
     assert india["available"] and india["localPrice"] > 0 and india["usdPrice"] is None
     assert all(r["usdPrice"] > 0 for r in result.rows if r["available"] and r is not india)
     assert "INR" not in result.meta["rates"] and "EUR" in result.meta["rates"]
-    assert "_transient" not in str(result.rows)
     assert cached_ttl("macbook-air") == FIVE_MINUTES                  # fetched again soon
 
 

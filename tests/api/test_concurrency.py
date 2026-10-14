@@ -12,7 +12,7 @@ from werkzeug.test import EnvironBuilder
 
 from app import app as flask_app
 from support.client import Event, cached_ttl, parse_sse
-from tracker import config, exchange, lookup, prices, results_cache, search, web
+from tracker import config, exchange, lookup, results_cache, search, web
 
 
 class Connection:
@@ -121,7 +121,7 @@ def test_searches_run_side_by_side_two_fetches_at_a_time(server, apple, monkeypa
     results_cache.clear()
 
     running, peak, lock = [0], [0], threading.Lock()
-    real_fetch = prices.stream_prices_into_queue
+    real_fetch = search._fetch_every_store
 
     def counted(*args, **kwargs):
         with lock:
@@ -133,7 +133,7 @@ def test_searches_run_side_by_side_two_fetches_at_a_time(server, apple, monkeypa
             with lock:
                 running[0] -= 1
 
-    monkeypatch.setattr(prices, "stream_prices_into_queue", counted)
+    monkeypatch.setattr(search, "_fetch_every_store", counted)
     apple.delay = lambda url: 0.1
     searches = [in_background(server.search, name, "stream") for name in names]
     for s in searches:
@@ -221,6 +221,28 @@ def test_waiting_search_gets_the_results_of_the_one_ahead_of_it(server, apple, v
     assert len(apple.calls) == calls                                     # not fetched a second time
 
 
+def test_slot_is_handed_on_only_once_the_results_are_cached(server, apple, monkeypatch, via):
+    """The search waiting for the slot finds the finished fetch in the cache, even if storing it is slow."""
+    known("prod14")
+    apple.delay = lambda url: 0.1
+    store = results_cache.build_payload
+
+    def slow_store(*args):
+        time.sleep(0.3)
+        return store(*args)
+
+    monkeypatch.setattr(results_cache, "build_payload", slow_store)
+    with all_slots_taken():
+        search.fetch_slots.release()                                     # one slot left
+        first = in_background(server.search, "prod14", via)
+        assert wait_until(lambda: free_slots() == 0)                     # the first search has it
+        second = in_background(server.search, "prod14", via)
+        for s in (first, second):
+            s["thread"].join(10)
+    assert first["value"].priced == 30 and not first["value"].cached
+    assert second["value"].priced == 30 and second["value"].cached      # not fetched a second time
+
+
 # ---------------------------------------------------------------------------
 # Closed pages and failures
 # ---------------------------------------------------------------------------
@@ -250,7 +272,7 @@ def test_closed_page_stops_waiting_without_taking_a_slot(apple):
     assert len(apple.calls) == calls and "prod11" not in results_cache._entries
 
 
-def test_fetch_that_breaks_off_ends_the_stream_with_try_again(server, monkeypatch):
+def test_fetch_that_breaks_off_ends_with_try_again(server, monkeypatch, via):
     known("prod12")
 
     def broken():
@@ -258,11 +280,14 @@ def test_fetch_that_breaks_off_ends_the_stream_with_try_again(server, monkeypatc
 
     monkeypatch.setattr(web, "make_connector", broken)
     monkeypatch.setattr(threading, "excepthook", lambda args: None)     # the thread's traceback is expected
-    stream = in_background(server.stream, "prod12")
-    stream["thread"].join(5)
-    events = stream["value"]
-    assert [e.name for e in events] == ["searching", "meta", "error"]
-    assert events[-1].data == search.fetch_failed_payload()
+    if via == "stream":
+        events = server.stream("prod12")
+        assert [e.name for e in events] == ["searching", "meta", "error"]
+        assert events[-1].data == search.fetch_failed_payload()
+    else:
+        resp = server.get("prod12")
+        assert resp.status_code == 503 and resp.headers["Retry-After"] == "10"
+        assert resp.get_json() == search.fetch_failed_payload()
     assert "prod12" not in results_cache._entries and free_slots() == 2
 
 

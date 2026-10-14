@@ -76,7 +76,7 @@ def test_result_with_a_failed_store_is_kept_five_minutes(server, apple, clock, v
 def test_result_without_any_price_is_kept_five_minutes(server, clock):
     result = server.search("AirTag")
     assert result.meta["slug"] == "airtag" and result.priced == 0 and len(result.rows) == 50
-    assert result.meta["expiresInSeconds"] == FIVE_MINUTES and "_transient" not in json.dumps(result.rows)
+    assert result.meta["expiresInSeconds"] == FIVE_MINUTES
     clock.advance(6 * MINUTE)
     assert not server.search("AirTag").cached
 
