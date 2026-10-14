@@ -133,7 +133,7 @@ def test_cache_hit_uses_current_rates(server, apple, clock, via):
     assert hit.meta["rates"]["EUR"] == 0.80 and hit.meta["rates"]["JPY"] == 200.0
     prices = [r["usdPrice"] for r in hit.rows if r["available"]]
     assert prices == sorted(prices) and len(hit.rows) == 50
-    stored = results_cache._entries["macbook-air"]["payload"]
+    stored, _, _ = results_cache.get("macbook-air")
     assert next(r for r in stored["results"] if r["country"] == "Ireland")["usdPrice"] == first.row("Ireland")["usdPrice"]
 
 

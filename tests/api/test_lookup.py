@@ -1,6 +1,4 @@
 """Turning what was typed into Apple's product page: names, closest matches, failed and stale look-ups."""
-import time
-
 import pytest
 
 from fakes.apple import store_prefix
@@ -10,7 +8,8 @@ FIVE_MINUTES, HOUR = 5 * 60, 3600
 
 
 def remembered(name: str):
-    return lookup._entries.get(name)
+    """The name cache's entry for `name` (its answer, and how long it is kept), or None."""
+    return lookup.answers.get(name)
 
 
 def store_requests(apple, slug_fragment: str) -> list[str]:
@@ -110,8 +109,8 @@ def test_built_in_name_is_checked_once_then_remembered(server, apple):
 
 def test_retired_built_in_name_is_not_found(server):
     resp = server.get("iPhone 16 Pro")
-    assert resp.status_code == 404 and results_cache._entries == {}
-    assert remembered("iphone 16 pro")["failed"] is False and remembered("iphone 16 pro")["expires"] is not None
+    assert resp.status_code == 404 and results_cache.size() == 0
+    assert remembered("iphone 16 pro").value.failed is False and remembered("iphone 16 pro").ttl is not None
 
 
 def test_stale_table_entry_falls_back_to_discovery(server, apple, monkeypatch):
@@ -134,7 +133,7 @@ def test_suggestion_that_checks_out_is_used_and_remembered(server, apple):
     apple.suggestions["big laptop"] = "https://www.apple.com/macbook-air/"
     result = server.search("big laptop")
     assert result.meta["slug"] == "macbook-air" and result.meta["substituted"] is True
-    assert remembered("big laptop")["expires"] is None
+    assert remembered("big laptop").ttl is None
 
 
 def test_suggestion_whose_page_cannot_be_checked_is_a_temporary_failure(server, apple):
@@ -147,8 +146,8 @@ def test_suggestion_whose_page_cannot_be_checked_is_a_temporary_failure(server, 
 def test_suggestions_service_down_does_not_make_a_name_temporary(server, apple):
     apple.suggestions_failure = "timeout"
     assert server.get("Nonexistent Thing").status_code == 404
-    assert remembered("nonexistent thing")["failed"] is False
-    assert server.get("MacBook Air").status_code == 200 and remembered("macbook air")["expires"] is None
+    assert remembered("nonexistent thing").value.failed is False
+    assert server.get("MacBook Air").status_code == 200 and remembered("macbook air").ttl is None
 
 
 # ---------------------------------------------------------------------------
@@ -163,12 +162,13 @@ def test_apple_not_answering_is_try_again_not_not_found(server, apple, clock, fa
     assert resp.status_code == 503 and body["temporary"] is True
     assert "Apple did not respond" in body["error"] and "MacBook Air" in body["error"] and "Could not find" not in body["error"]
     assert 1 <= body["retryAfterSeconds"] <= 60 and resp.headers["Retry-After"] == str(body["retryAfterSeconds"])
-    assert results_cache._entries == {}
+    assert results_cache.size() == 0
     apple.outage = None
     clock.advance(61)
     result = server.search("MacBook Air")
     assert result.meta["slug"] == "macbook-air" and result.priced == 30
-    assert remembered("macbook air") == {"result": ("macbook-air", "mac"), "expires": None, "failed": False}
+    assert remembered("macbook air").value == lookup.Answer(("macbook-air", "mac"), failed=False)
+    assert remembered("macbook air").ttl is None
 
 
 def test_failed_look_up_is_held_for_one_minute(server, apple, clock):
@@ -213,7 +213,7 @@ def test_one_failed_check_is_enough_to_say_try_again(server, apple, clock, faili
 def test_outage_while_checking_a_built_in_name(server, apple, clock):
     apple.outage = "timeout"
     resp = server.get("Apple Watch Ultra 2")
-    assert resp.status_code == 503 and resp.get_json()["temporary"] is True and results_cache._entries == {}
+    assert resp.status_code == 503 and resp.get_json()["temporary"] is True and results_cache.size() == 0
     apple.outage = None
     clock.advance(61)
     result = server.search("Apple Watch Ultra 2")
@@ -226,19 +226,19 @@ def test_fallback_found_while_a_check_failed_is_kept_five_minutes(server, apple,
     fallback = server.search("iPhone 17 Pro Max")
     assert fallback.meta["slug"] == "iphone-17" and fallback.meta["substituted"] is True
     entry = remembered("iphone 17 pro max")
-    assert entry["failed"] is False and 290 <= entry["expires"] - time.monotonic() <= FIVE_MINUTES
+    assert entry.value.failed is False and entry.ttl == FIVE_MINUTES
     apple.url_failures.clear()
     clock.advance(4 * 60)
     assert server.search("iPhone 17 Pro Max").meta["slug"] == "iphone-17"
     clock.advance(2 * 60)
     exact = server.search("iPhone 17 Pro Max")
     assert exact.meta["slug"] == "iphone-17-pro-max" and exact.meta["substituted"] is False
-    assert remembered("iphone 17 pro max")["expires"] is None
+    assert remembered("iphone 17 pro max").ttl is None
 
 
 def test_fallback_without_any_failure_is_remembered_for_good(server):
     assert server.search("iPhone 17 Pro Max").meta["slug"] == "iphone-17"
-    assert remembered("iphone 17 pro max")["expires"] is None
+    assert remembered("iphone 17 pro max").ttl is None
 
 
 # ---------------------------------------------------------------------------
@@ -271,7 +271,7 @@ def test_known_name_lookup_is_normalised_and_expires(server, clock):
     assert lookup.slug_is_known("Nonexistent Thing") and lookup.slug_is_known("  NONEXISTENT thing ")
     clock.advance(HOUR + 1)
     assert not lookup.slug_is_known("Nonexistent Thing")
-    assert "nonexistent thing" not in lookup._entries
+    assert "nonexistent thing" not in lookup.names()
 
 
 # ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@ Modules, roughly in the order a search uses them:
   limits         abuse protection: rate limits, telling visitors apart, the admin token
   lookup         product name → Apple's page for it (its slug), with a cache of answers
   results_cache  finished result sets per product
+  caches         the cache class those two keep their answers in
   exchange       exchange rates, kept for 30 minutes
   prices         reading a price off a store's page, and fetching every store at once
   web            one event loop and connection pool for apple.com

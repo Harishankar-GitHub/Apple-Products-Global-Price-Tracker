@@ -57,7 +57,7 @@ def test_look_ups_per_visitor(server, apple, clock, limits_on):
     refused = server.get("prod21", A)
     body = refused.get_json()
     assert refused.status_code == 429 and len(apple.calls) == calls             # Apple not contacted
-    assert "prod21" not in lookup._entries and "prod21" not in results_cache._entries
+    assert "prod21" not in lookup.names() and results_cache.get("prod21") is None
     assert "looked up a lot of products" in body["error"] and "minutes" in body["error"]
     assert 1 <= body["retryAfterSeconds"] <= 600 and refused.headers["Retry-After"] == str(body["retryAfterSeconds"])
     assert server.search("prod5", ip=A).cached                                 # cached products still served
@@ -245,7 +245,7 @@ def test_bad_product_parameter_is_refused_before_any_work(server, apple, limits_
     else:
         events = server.stream(product, A)
         assert [e.name for e in events] == ["error"] and message in events[0].data["error"]
-    assert apple.calls == [] and lookup._entries == {} and limits.fetch_limiter.count(A) == 0
+    assert apple.calls == [] and lookup.size() == 0 and limits.fetch_limiter.count(A) == 0
 
 
 def test_80_character_name_is_accepted(server):

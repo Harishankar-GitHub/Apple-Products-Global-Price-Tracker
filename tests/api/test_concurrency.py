@@ -179,7 +179,7 @@ def test_busy_reply_in_the_stream(short_waits):
     assert 1.4 < waited < 2.5
     assert events[2].data == search.busy_payload()
     assert events[2].data["temporary"] is True and events[2].data["retryAfterSeconds"] == 10
-    assert "prod7" not in results_cache._entries
+    assert results_cache.get("prod7") is None
 
 
 def test_busy_reply_from_the_json_endpoint(server, short_waits):
@@ -206,7 +206,8 @@ def test_waiting_search_starts_as_soon_as_a_slot_is_free():
 
 def test_waiting_search_gets_the_results_of_the_one_ahead_of_it(server, apple, via):
     server.get("prod9")
-    stored = results_cache._entries.pop("prod9")
+    stored, _, _ = results_cache.get("prod9")
+    results_cache.clear()
     with all_slots_taken():
         if via == "stream":
             connection = Connection("prod9")
@@ -215,7 +216,7 @@ def test_waiting_search_gets_the_results_of_the_one_ahead_of_it(server, apple, v
         else:
             waiting = in_background(server.get, "prod9")
             time.sleep(0.3)
-        results_cache._entries["prod9"] = {**stored, "ts": time.monotonic()}   # the search ahead of it finished
+        results_cache.put("prod9", stored, complete=True)                # the search ahead of it finished
         calls = len(apple.calls)
         search.fetch_slots.release()
         waiting["thread"].join(10)
@@ -263,7 +264,7 @@ def test_closed_page_does_not_waste_the_fetch(server, apple):
     connection.close()
     assert free_slots() == 1                                            # its fetch is still running
     assert wait_until(lambda: free_slots() == 2)
-    assert len(results_cache._entries["prod10"]["payload"]["results"]) == 50 and cached_ttl("prod10") == 6 * 3600
+    assert len(results_cache.get("prod10")[0]["results"]) == 50 and cached_ttl("prod10") == 6 * 3600
     assert server.search("prod10", via="stream").cached
 
 
@@ -276,7 +277,7 @@ def test_closed_page_stops_waiting_without_taking_a_slot(apple):
         calls = len(apple.calls)
     time.sleep(0.5)
     assert free_slots() == 2
-    assert len(apple.calls) == calls and "prod11" not in results_cache._entries
+    assert len(apple.calls) == calls and results_cache.get("prod11") is None
 
 
 def test_fetch_that_breaks_off_ends_with_try_again(server, apple, monkeypatch, caplog, via):
@@ -301,7 +302,7 @@ def test_fetch_that_breaks_off_ends_with_try_again(server, apple, monkeypatch, c
         resp = server.get("prod12")
         assert resp.status_code == 503 and resp.headers["Retry-After"] == "10"
         assert resp.get_json() == search.fetch_failed_payload()
-    assert "prod12" not in results_cache._entries and free_slots() == 2
+    assert results_cache.get("prod12") is None and free_slots() == 2
     assert "broke off" in caplog.text and "simulated failure" in caplog.text    # logged with its traceback
     assert wait_until(lambda: tasks_on_the_loop() == 0, timeout=1)       # the store still loading was stopped
 
@@ -345,7 +346,8 @@ def test_caches_under_many_threads(server, monkeypatch):
                 elif step == 1:
                     results_cache.get(key)
                 elif step == 2:
-                    lookup._remember(key, ("macbook-air", "mac"), ttl=60 if j % 3 == 0 else 0, failed=False)
+                    lookup.answers.put(key, lookup.Answer(("macbook-air", "mac"), failed=False),
+                                       ttl=60 if j % 3 == 0 else 0)
                 elif step == 3:
                     lookup.slug_is_known(key)
                     lookup.discover_slug("macbook air")
@@ -365,4 +367,4 @@ def test_caches_under_many_threads(server, monkeypatch):
     finally:
         sys.setswitchinterval(interval)
     assert errors == []
-    assert len(results_cache._entries) <= 15 and len(lookup._entries) <= 15
+    assert results_cache.size() <= 15 and lookup.size() <= 15

@@ -80,6 +80,7 @@ apple-global-price-tracker/
 │   │   ├── lookup.py       #   Product name → Apple's page for it, with its cache
 │   │   ├── prices.py       #   Reading a price off a page; fetching all 50 stores at once
 │   │   ├── results_cache.py #  Finished result sets per product
+│   │   ├── caches.py       #   The cache class both of those use: an expiry per entry, a size cap
 │   │   ├── exchange.py     #   Exchange rates, kept for 30 minutes
 │   │   ├── web.py          #   One event loop and connection pool for apple.com
 │   │   ├── countries.json  #   The one table of countries, for the API and (copied) the page

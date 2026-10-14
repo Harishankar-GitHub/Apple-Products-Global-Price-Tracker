@@ -16,7 +16,6 @@ to the wrong page) until the server restarts:
 import asyncio
 import math
 import re
-import threading
 import time
 from typing import NamedTuple, Optional
 from urllib.parse import urlparse
@@ -24,6 +23,7 @@ from urllib.parse import urlparse
 import aiohttp
 
 from . import config, web
+from .caches import Entry, TTLCache
 from .prices import build_shop_url
 
 # Names that plain name → slug conversion gets wrong, including older models
@@ -258,49 +258,28 @@ class SlugLookup(NamedTuple):
     retry_after: int = 0                # seconds until a failed look-up is tried again
 
 
-# name as typed (lower case) → {"result": (slug, category) or None,
-#                               "expires": monotonic time or None, "failed": bool}
-# Oldest first: a name stored again moves to the end.
-_entries: dict[str, dict] = {}
-_lock = threading.RLock()   # requests are served by several threads at once
+class Answer(NamedTuple):
+    """What the cache keeps for a name."""
+    result: Optional[tuple[str, str]]   # (slug, category), or None
+    failed: bool                        # Apple could not be checked
 
 
-def _entry(cache_key: str) -> Optional[dict]:
-    """The live cache entry for a name, dropping it if it has expired."""
-    with _lock:
-        entry = _entries.get(cache_key)
-        if entry is None:
-            return None
-        if entry["expires"] is not None and time.monotonic() >= entry["expires"]:
-            _entries.pop(cache_key, None)
-            return None
-        return entry
+# Name as typed (lower case) → its Answer, for as long as the answer is sure
+# enough (see the top of this file). Capped at config.SLUG_CACHE_MAX names.
+answers: TTLCache[Answer] = TTLCache(max_size=lambda: config.SLUG_CACHE_MAX)
 
 
-def _remember(cache_key: str, result: Optional[tuple[str, str]], ttl: Optional[float], failed: bool) -> dict:
-    """Store an answer as the newest entry (ttl None: keep), dropping the oldest names beyond the cap."""
-    entry = {"result": result,
-             "expires": None if ttl is None else time.monotonic() + ttl,
-             "failed": failed}
-    with _lock:
-        _entries.pop(cache_key, None)               # re-insert so it counts as newest
-        _entries[cache_key] = entry
-        while len(_entries) > config.SLUG_CACHE_MAX:
-            _entries.pop(next(iter(_entries)), None)
-    return entry
-
-
-def _as_lookup(entry: dict) -> SlugLookup:
+def _as_lookup(entry: Entry[Answer]) -> SlugLookup:
     wait = 0
-    if entry["failed"]:
-        wait = max(1, math.ceil(entry["expires"] - time.monotonic()))
-    return SlugLookup(entry["result"], entry["failed"], wait)
+    if entry.value.failed:
+        wait = max(1, math.ceil(entry.expires_in(time.monotonic())))
+    return SlugLookup(entry.value.result, entry.value.failed, wait)
 
 
 def discover_slug(product_name: str) -> SlugLookup:
     """The page for a product name: from the cache, or by checking apple.com."""
     cache_key = product_name.strip().lower()
-    entry = _entry(cache_key)
+    entry = answers.get(cache_key)
     if entry is not None:
         return _as_lookup(entry)                    # cache hit
 
@@ -313,24 +292,22 @@ def discover_slug(product_name: str) -> SlugLookup:
         ttl = config.SLUG_TTL_NOT_FOUND             # Apple answered: no such page
     else:
         ttl = config.SLUG_TTL_FAILED                # Apple did not answer: unknown
-    return _as_lookup(_remember(cache_key, result, ttl, failed=result is None and unsure))
+    return _as_lookup(answers.put(cache_key, Answer(result, failed=result is None and unsure), ttl))
 
 
 def slug_is_known(product_name: str) -> bool:
     """True when resolving this name needs no request to apple.com."""
-    return _entry(product_name.strip().lower()) is not None
+    return answers.get(product_name.strip().lower()) is not None
 
 
 def names() -> list[str]:
     """The names held, oldest first (for the admin view of /api/cache/status)."""
-    with _lock:
-        return list(_entries)
+    return answers.keys()
 
 
 def size() -> int:
-    return len(_entries)
+    return len(answers)
 
 
 def clear() -> None:
-    with _lock:
-        _entries.clear()
+    answers.clear()
