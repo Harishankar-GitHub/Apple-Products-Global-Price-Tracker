@@ -1,8 +1,8 @@
 """Exchange rates: what counts as a usable rate, the 30-minute rate cache, and prices that cannot be converted."""
 import pytest
 
-import app as api
 from support.client import cached_ttl
+from tracker import exchange, results_cache
 
 SIX_HOURS, FIVE_MINUTES = 6 * 3600, 5 * 60
 
@@ -15,17 +15,17 @@ SIX_HOURS, FIVE_MINUTES = 6 * 3600, 5 * 60
 )
 def test_usd_rate(rate, expected):
     rates = {} if rate is None else {"X": rate}
-    assert api.usd_rate(rates, "X") == expected
+    assert exchange.usd_rate(rates, "X") == expected
 
 
 @pytest.mark.parametrize("rates", [{}, None])
 def test_usd_rate_without_any_rates(rates):
-    assert api.usd_rate(rates, "EUR") is None
+    assert exchange.usd_rate(rates, "EUR") is None
 
 
 def test_rates_sent_to_the_page_are_only_usable_ones_for_listed_currencies():
     rates = {"EUR": 0.92, "INR": 0, "JPY": -150, "CAD": "1.38", "XYZ": 2.0, "GBP": 0.78}
-    assert api.rates_for_client(rates) == {"EUR": 0.92, "GBP": 0.78}
+    assert exchange.rates_for_client(rates) == {"EUR": 0.92, "GBP": 0.78}
 
 
 def rate_requests(apple) -> int:
@@ -62,7 +62,7 @@ def test_unconverted_price_comes_after_every_converted_one(server, apple):
 
 
 def expire_rate_cache(monkeypatch):
-    monkeypatch.setattr(api, "_rates_fetched_at", -1e9)
+    monkeypatch.setattr(exchange, "_fetched_at", -1e9)
 
 
 def test_rate_coming_back(server, apple, clock, monkeypatch):
@@ -134,7 +134,7 @@ def test_cache_hit_uses_current_rates(server, apple, clock, via):
     assert hit.meta["rates"]["EUR"] == 0.80 and hit.meta["rates"]["JPY"] == 200.0
     prices = [r["usdPrice"] for r in hit.rows if r["available"]]
     assert prices == sorted(prices) and len(hit.rows) == 50
-    stored = api._results_cache["macbook-air"]["payload"]
+    stored = results_cache._entries["macbook-air"]["payload"]
     assert next(r for r in stored["results"] if r["country"] == "Ireland")["usdPrice"] == first.row("Ireland")["usdPrice"]
 
 
@@ -149,7 +149,7 @@ def test_cache_hit_while_the_rate_service_is_down(server, apple, monkeypatch):
     last_known = server.search("MacBook Air")
     assert last_known.cached and last_known.row("Ireland")["usdPrice"] == second.row("Ireland")["usdPrice"]
     assert last_known.meta["rates"]["EUR"] == 0.80
-    monkeypatch.setattr(api, "_rates_cache", {})                     # no rates at all
+    exchange.clear()                                                  # no rates at all
     unchanged = server.search("MacBook Air")
     assert unchanged.row("Ireland")["usdPrice"] == first.row("Ireland")["usdPrice"]
 

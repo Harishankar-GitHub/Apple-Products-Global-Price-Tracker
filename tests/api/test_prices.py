@@ -5,9 +5,10 @@ import json
 import aiohttp
 import pytest
 
-import app as api
 from fakes.apple import RATES, price_block, store_prefix
 from support.client import cached_ttl
+from tracker import config, prices, results_cache, web
+from tracker.countries import COUNTRIES
 
 SIX_HOURS, FIVE_MINUTES = 6 * 3600, 5 * 60
 
@@ -29,7 +30,7 @@ def instalment(amount: float) -> str:
      ("apple-vision-pro", 50)],
 )
 def test_floor_in_dollars(slug, floor):
-    assert api.get_min_price(slug) == floor
+    assert prices.get_min_price(slug) == floor
 
 
 @pytest.mark.parametrize(
@@ -44,7 +45,7 @@ def test_floor_in_dollars(slug, floor):
     ],
 )
 def test_floor_in_the_store_currency(slug, currency, floor):
-    assert api.local_min_price(slug, currency, RATES) == pytest.approx(floor)
+    assert prices.local_min_price(slug, currency, RATES) == pytest.approx(floor)
 
 
 @pytest.mark.parametrize(
@@ -53,11 +54,11 @@ def test_floor_in_the_store_currency(slug, currency, floor):
     ids=["unknown-currency", "no-rates", "zero", "null", "negative", "text"],
 )
 def test_floor_without_a_usable_rate_stays_in_dollars(currency, rates):
-    assert api.local_min_price("iphone-17", currency, rates) == 500
+    assert prices.local_min_price("iphone-17", currency, rates) == 500
 
 
 def test_us_floor_needs_no_rate():
-    assert api.local_min_price("iphone-17", "USD", {}) == 400
+    assert prices.local_min_price("iphone-17", "USD", {}) == 400
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +66,7 @@ def test_us_floor_needs_no_rate():
 # ---------------------------------------------------------------------------
 
 def accepted(html: str, slug: str, currency: str):
-    return api.extract_low_price(html, api.local_min_price(slug, currency, RATES))
+    return prices.extract_low_price(html, prices.local_min_price(slug, currency, RATES))
 
 
 @pytest.mark.parametrize(
@@ -102,10 +103,10 @@ US_PRICES = {"mac-pro": 6999, "mac-studio": 1999, "imac": 1299, "macbook-air": 9
              "airpods-pro": 249, "apple-tv-4k": 129, "homepod-mini": 99, "airtag": 29}
 
 
-@pytest.mark.parametrize("country", sorted(api.COUNTRIES))
+@pytest.mark.parametrize("country", sorted(COUNTRIES))
 def test_every_store_accepts_real_prices_and_rejects_instalments(country):
     """Every product family, priced from 15% under the US price to double it; instalments over 12–36 months."""
-    currency = api.COUNTRIES[country][1]
+    currency = COUNTRIES[country][1]
     rate = RATES[currency]
     digits = 3 if rate < 1 else 0
     for slug, usd in US_PRICES.items():
@@ -215,7 +216,7 @@ def test_results_are_cheapest_first_then_unavailable_a_to_z(server):
 
 def price_downloads(server, apple, product: str) -> list[str]:
     server.search(product)                        # looks the name up (and fetches once)
-    api._results_cache.clear()
+    results_cache.clear()
     apple.calls.clear()
     server.search(product)
     return apple.apple_calls()
@@ -236,14 +237,14 @@ def test_each_page_is_downloaded_at_most_once(server, apple, product, downloads)
 def test_store_with_a_price_on_the_buy_page_skips_the_product_page(server, apple):
     urls = price_downloads(server, apple, "MacBook Air")
     for prefix in apple.stores:                   # these stores show the price on the buy page
-        assert [u for u in urls if store_prefix(u) == prefix] == [api.build_shop_url(prefix, "mac", "macbook-air")]
+        assert [u for u in urls if store_prefix(u) == prefix] == [prices.build_shop_url(prefix, "mac", "macbook-air")]
 
 
 @pytest.mark.parametrize("connections", [50, 10])
 def test_stores_are_fetched_side_by_side_up_to_the_connection_limit(server, apple, monkeypatch, connections):
-    monkeypatch.setattr(api, "APPLE_MAX_CONNECTIONS", connections)
+    monkeypatch.setattr(config, "APPLE_MAX_CONNECTIONS", connections)
     server.search("MacBook Air")
-    api._results_cache.clear()
+    results_cache.clear()
     apple.delay = lambda url: 0.05
     apple.peak_connections = 0
     server.search("MacBook Air", via="stream")
@@ -259,7 +260,7 @@ def test_connector_settings_are_accepted_by_aiohttp(monkeypatch):
     monkeypatch.setattr(aiohttp, "TCPConnector", aiohttp.connector.TCPConnector)
 
     async def make():
-        connector = api._make_connector()
+        connector = web.make_connector()
         try:
             return connector.limit, connector.limit_per_host
         finally:

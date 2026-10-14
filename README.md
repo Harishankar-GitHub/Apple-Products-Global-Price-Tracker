@@ -51,7 +51,18 @@ apple-global-price-tracker/
 ├── assets/
 │   └── og-image.html       # Source of og.png
 ├── api/
-│   ├── app.py              # Flask API — async price fetching + SSE streaming
+│   ├── app.py              # Entry point that gunicorn loads (app:app)
+│   ├── tracker/            # The Flask API
+│   │   ├── routes.py       #   HTTP endpoints
+│   │   ├── search.py       #   Fetch slots and the messages a search can end with
+│   │   ├── limits.py       #   Rate limits, telling visitors apart, the admin token
+│   │   ├── lookup.py       #   Product name → Apple's page for it, with its cache
+│   │   ├── prices.py       #   Reading a price off a page; fetching all 50 stores at once
+│   │   ├── results_cache.py #  Finished result sets per product
+│   │   ├── exchange.py     #   Exchange rates, kept for 30 minutes
+│   │   ├── web.py          #   Connections to apple.com
+│   │   ├── countries.py    #   The 50 stores: URL prefix, currency, flag
+│   │   └── config.py       #   Every setting, including the environment variables
 │   ├── gunicorn.conf.py    # Server settings: threads and timeouts
 │   ├── requirements.txt
 │   └── render.yaml         # Render deployment config
@@ -330,7 +341,7 @@ The per-visitor limits only work if the server sees each visitor's own address. 
 
 - `address` should be your own public IP address (search the web for "what is my IP" to compare).
 - `identified_by` should be `CF-Connecting-IP` on Render.
-- If `address` is not yours, or `identified_by` is `connection`, every visitor is being counted as one and `_client_id()` in `api/app.py` needs adjusting for the host. Until then the all-visitors limit still protects the server.
+- If `address` is not yours, or `identified_by` is `connection`, every visitor is being counted as one and `client_id()` in `api/tracker/limits.py` needs adjusting for the host. Until then the all-visitors limit still protects the server.
 
 ---
 
@@ -346,7 +357,7 @@ Three in-memory caches reduce latency and external HTTP calls:
 
 On a cache hit for price results, the SSE stream replays cached rows as rapid-fire events — the browser still sees the same `searching → meta → result × N → done` flow, just near-instantly.
 
-Price results are kept for 6 hours (`RESULTS_TTL` in `api/app.py`) because Apple changes prices rarely. Two safeguards go with the long lifetime:
+Price results are kept for 6 hours (`RESULTS_TTL` in `api/tracker/config.py`) because Apple changes prices rarely. Two safeguards go with the long lifetime:
 
 - **Incomplete fetches are not kept for long.** If any country failed for a temporary reason (timeout, network error, rate limit, server error), any store's currency had no exchange rate, or no country returned a price at all, the result set is kept for only 5 minutes (`RESULTS_TTL_SHORT`) so it is retried soon. A clean "not sold in this country" (404) does not count as a failure.
 - **Currency conversion does not age with the cache.** On a cache hit the USD prices and the `rates` table are recalculated from the current exchange rates (themselves refreshed every 30 min); only the local prices come from the cache.
@@ -426,7 +437,7 @@ Per store, the buy page is fetched first because it normally has the price. The 
 
 ### Sanity floor
 
-A page can also contain smaller numbers that are not the price — a monthly instalment, an accessory, a trade-in value — so a figure is only accepted if it is at least a minimum for that product family. The minimums are in US dollars (`get_min_price` in `api/app.py`: iPhone 500, MacBook 800, AirTag 20, …).
+A page can also contain smaller numbers that are not the price — a monthly instalment, an accessory, a trade-in value — so a figure is only accepted if it is at least a minimum for that product family. The minimums are in US dollars (`get_min_price` in `api/tracker/prices.py`: iPhone 500, MacBook 800, AirTag 20, …).
 
 Each store's price is in its own currency, so the minimum is converted with the current exchange rate before comparing (`local_min_price`), and applied with 20% room under it (`PRICE_FLOOR_SLACK`) for stores that price a product below the US price. For an iPhone that is $400 in the US, about 124 KWD in Kuwait and ₹33,600 in India.
 
