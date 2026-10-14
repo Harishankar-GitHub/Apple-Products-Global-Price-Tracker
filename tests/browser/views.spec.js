@@ -113,6 +113,63 @@ test.describe('desktop', () => {
   });
 });
 
+// Large windows: the page widens with the window (about 4% of margin on each side, between
+// 1100px and 2400px wide), text grows gently (16px up to a 1440px window, 18px from 2560px),
+// and the room goes to the table and chart, not to empty space.
+const sides = page => page.evaluate(() => {
+  const box = sel => document.querySelector(sel).getBoundingClientRect();
+  const size = sel => parseFloat(getComputedStyle(document.querySelector(sel)).fontSize);
+  const row = document.querySelector('.chart-row');
+  const [label, track, value] = ['.chart-label', '.chart-track', '.chart-value'].map(s => row.querySelector(s).getBoundingClientRect());
+  return {
+    parts: ['#summary', '#controls', '#views'].map(sel => { const r = box(sel); return { left: r.left, right: innerWidth - r.right, width: r.width }; }),
+    headerLeft: box('.header-inner').left, cardLeft: box('.summary-bar').left,
+    root: size('html'), heading: size('.hero h2'), price: size('.price-local'), chartName: size('.chart-label'),
+    tableWidth: box('#results').width, chartWidth: box('#chartView').width,
+    chartOnOneLine: Math.abs(label.top - track.top) < 12 && Math.abs(label.top - value.top) < 12 && label.right < track.left,
+    priceBar: document.querySelector('.price-bar-wrap').getBoundingClientRect().width,
+  };
+});
+
+for (const [width, height, pageWidth, root] of [[1024, 768, 1024, 16], [1280, 900, 1280 * 0.92, 16], [1440, 900, 1440 * 0.92, 16],
+  [1920, 1080, 1920 * 0.92, 16 + 2 * 480 / 1120], [2560, 1440, 2560 * 0.92, 18], [3840, 2160, 2400, 18]]) {
+  test.describe(`a ${width}px wide window`, () => {
+    test.use({ viewport: { width, height } });
+
+    test('the page widens with it, evenly on both sides, without sideways scrolling', async ({ page, server }) => {
+      await page.goto('/');
+      await server.searchAndFinish('MacBook Air');
+      const s = await sides(page);
+      for (const part of s.parts) {
+        expect(part.width).toBeCloseTo(pageWidth, 0);
+        expect(Math.abs(part.left - part.right)).toBeLessThanOrEqual(1);           // centred
+      }
+      expect(s.headerLeft).toBeCloseTo(s.cardLeft, 0);                             // the header lines up with the cards
+      expect(await sidewaysScroll(page)).toBeLessThanOrEqual(0);
+    });
+
+    test('text grows gently with the window, all of it in step', async ({ page, server }) => {
+      await page.goto('/');
+      await server.searchAndFinish('MacBook Air');
+      const s = await sides(page);
+      expect(s.root).toBeCloseTo(root, 1);
+      expect(s.price).toBeCloseTo(root * 15 / 16, 1);                             // 15px at the browser's own size
+      expect(s.chartName).toBeCloseTo(root * 14 / 16, 1);
+      expect(s.heading).toBeCloseTo(Math.min(root * 2.75, Math.max(root * 1.75, width / 20)), 1);
+    });
+
+    test('the room goes to the table and the chart', async ({ page, server }) => {
+      await page.goto('/');
+      await server.searchAndFinish('MacBook Air');
+      const s = await sides(page);
+      expect((await layout(page)).currencyColumn).toBe(width >= 1600);            // the currency fits next to the chart
+      expect(s.chartOnOneLine).toBe(width >= 1900);                               // name, bar and price on one line
+      expect(s.tableWidth / s.chartWidth).toBeCloseTo(width >= 1900 ? 1 : 1.3, 1); // the chart gets half the width
+      if (width >= 1600) expect(s.priceBar).toBeLessThanOrEqual(16 * root + 0.5);  // the price bar is not stretched
+    });
+  });
+}
+
 test.describe('phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
 

@@ -33,6 +33,7 @@ Backend API (Render): https://apple-products-global-price-tracker.onrender.com
 - **Recent searches and autocomplete** — the last 6 successful searches are kept in the browser; product names are suggested as you type.
 - **Region filters and pinned countries** — filter by Americas / Europe / Asia Pacific / Middle East & Africa; star a country to keep it at the top.
 - **Table and chart** — on wide screens the table and a bar chart of how much more each country costs than the cheapest sit side by side; a switch shows only the table or only the chart. Narrow screens show one at a time.
+- **Fits large monitors** — the page widens with the window (from 1100px up to 2400px, with about 4% margin on each side) and text grows gently with it (the browser's normal size up to a 1440px window, 12.5% larger from 2560px). The extra room goes to the results: the currency column next to the chart from 1600px, and from 1900px the chart gets half the width with each country's name, bar and price on one line. Phones, tablets and laptops up to 1100px look exactly as before.
 - **CSV export** — downloads the rows currently shown.
 - **Clear empty states** — if no country returns a price the page says "No prices found for … in any country" (tick *Show unavailable* to see what each country returned); "No countries match these filters" is used only when a filter is the reason.
 - **Closest-match notice** — if the prices are for a different product than the one typed (for example a retired model mapped to the current one), the page says which product it is showing.
