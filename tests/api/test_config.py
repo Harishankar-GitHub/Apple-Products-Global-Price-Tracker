@@ -108,7 +108,7 @@ def test_gunicorn_settings(monkeypatch):
     assert conf["timeout"] == 120                    # a heartbeat with threads, not a per-request limit
     assert conf["graceful_timeout"] == 30
     assert "bind" not in conf                        # gunicorn then listens on Render's PORT
-    assert "accesslog" not in conf                   # off: it would write every visitor's address
+    assert "accesslog" not in conf                   # left to gunicorn (on Render: on, see gunicorn.conf.py)
 
 
 @pytest.mark.parametrize(("raw", "threads"), [("4", 4), ("32", 32), ("0", 1), ("-2", 1), ("abc", 16), ("", 16)])
