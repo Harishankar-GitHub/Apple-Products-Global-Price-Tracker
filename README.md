@@ -87,7 +87,8 @@ apple-global-price-tracker/
 │   │   └── config.py       #   Every setting, including the environment variables
 │   ├── gunicorn.conf.py    # Server settings: threads and timeouts
 │   ├── requirements.txt
-│   └── render.yaml         # Render deployment config
+│   ├── .python-version     # The Python version: 3.11 (Render, CI)
+│   └── render.yaml         # Render settings, for a service made as a Blueprint
 ├── tests/
 │   ├── api/                # API tests (pytest)
 │   ├── browser/            # Page and end-to-end tests (Playwright)
@@ -111,15 +112,19 @@ apple-global-price-tracker/
 
 1. Fork or push this repo to GitHub
 2. Go to [render.com](https://render.com) → **New → Web Service** → select this repo
-3. Set **Root Directory** to `api`
-4. Render auto-detects `render.yaml` → click **Deploy**
+3. Set **Root Directory** to `api`, **Build Command** to `pip install -r requirements.txt` and **Start Command** to `gunicorn -c gunicorn.conf.py app:app`
+4. Click **Deploy**
 5. Copy your service URL, e.g. `https://apple-products-global-price-tracker.onrender.com`
+
+A service made this way does not read `api/render.yaml`: its settings are the ones in the dashboard. `render.yaml` holds the same settings for **New → Blueprint** (Blueprint path `api/render.yaml`), which creates the service from the file and keeps it in step with it.
+
+**Python version.** `api/.python-version` says `3.11`, which on Render means the newest 3.11 release; CI tests the same. A `PYTHON_VERSION` environment variable on the service takes precedence over the file and has to be a full version such as `3.11.17` (`render.yaml` sets one). To see what a service runs, look at the first lines of its latest deploy log; to change it, edit or delete `PYTHON_VERSION` under **Environment**.
 
 > **Free tier note:** Render spins down the service after ~15 min of inactivity. The first request after a cold start takes 30–60 s to wake up. In-memory caches (exchange rates, slug resolutions, price results) are cleared on each cold start.
 >
 > To soften this, the page sends a request to `/api/health` as soon as it loads, so the service starts waking while the visitor is still typing. If a search is still waiting for the service's first reply (the ping has gone unanswered for 1.5 s, or the search for 3 s), the progress area shows "Waking up the server… this can take up to a minute" with a seconds counter and a moving bar.
 
-**Start command.** `render.yaml` starts the API with `gunicorn -c gunicorn.conf.py app:app`. If your service was created by hand with `gunicorn app:app` as the start command, that works too: gunicorn reads `gunicorn.conf.py` by itself when it starts in the `api` folder (the Root Directory). The file sets how many visitors are served at once — see [Serving several visitors at once](#serving-several-visitors-at-once).
+**Start command.** The API is started with `gunicorn -c gunicorn.conf.py app:app`. If your service was created with `gunicorn app:app` as the start command, that works too: gunicorn reads `gunicorn.conf.py` by itself when it starts in the `api` folder (the Root Directory). The file sets how many visitors are served at once — see [Serving several visitors at once](#serving-several-visitors-at-once).
 
 ### Step 2 — Configure the Frontend
 

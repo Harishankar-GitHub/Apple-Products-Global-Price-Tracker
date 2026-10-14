@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version-file: api/.python-version
           cache: pip
           cache-dependency-path: |
             requirements-dev.txt
@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.11"          # what Render runs
+          python-version-file: api/.python-version   # what Render runs
           cache: pip
           cache-dependency-path: |
             requirements-dev.txt
@@ -54,7 +54,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7     # the tests run the API locally, with apple.com faked
         with:
-          python-version: "3.11"
+          python-version-file: api/.python-version
           cache: pip
           cache-dependency-path: api/requirements.txt
       - run: pip install -r api/requirements.txt
