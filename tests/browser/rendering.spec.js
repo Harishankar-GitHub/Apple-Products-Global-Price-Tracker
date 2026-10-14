@@ -11,13 +11,15 @@ const ROWS = Array.from({ length: 50 }, (_, i) => ({ country: `Country ${i}`, fl
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
+    // Record every redraw of the results, with its time and the rows drawn. A redraw always
+    // rewrites the table's rows and footer, so it adds or removes elements inside #results;
+    // the row animations in between change only styles and classes. Each batch of added or
+    // removed elements is one redraw.
     window.__draws = [];
-    addEventListener('DOMContentLoaded', () => {           // record every redraw of the results
-      const draw = window.renderAll;
-      window.renderAll = function (...args) {
-        draw.apply(this, args);
+    addEventListener('DOMContentLoaded', () => {
+      new MutationObserver(() => {
         window.__draws.push({ t: performance.now(), rows: document.querySelectorAll('#results tbody tr[data-key]').length });
-      };
+      }).observe(document.getElementById('results'), { childList: true, subtree: true });
     });
   });
   await openPaused(page);
@@ -80,24 +82,25 @@ test.describe('streaming results', () => {
     expect(r.after).toEqual([{ t: r.finished, rows: 12 }]);
     await page.clock.runFor(1000);
     expect(await page.evaluate(() => window.__draws.length)).toBe(r.draws.length);
-    expect(await page.evaluate(() => renderTimer)).toBe(null); // eslint-disable-line no-undef -- the page's own variable
   });
 
   test('a new search cancels the redraw booked for the old one and draws its own first row at once', async ({ page, server }) => {
     const old = await server.search('MacBook Air');
     await old.meta({ total: 50 });
-    await old.results(ROWS.slice(0, 6));
+    await old.results(ROWS.slice(0, 1));
+    await page.clock.runFor(0);                                          // the old search's first row…
+    await old.results(ROWS.slice(1, 6));                                 // …and a redraw booked for the next ones
     await page.clock.runFor(100);
     const fresh = await server.search('iPhone 17');
-    expect(await page.evaluate(() => renderTimer)).toBe(null); // eslint-disable-line no-undef
-    await page.clock.runFor(700);
-    await expect(page.locator('#results tbody tr[data-key]')).toHaveCount(0);
-    await expect(page.locator('#results tbody[data-skeleton]')).toHaveCount(1);           // loading rows
     await page.evaluate(() => { window.__draws = []; });
+    await page.clock.runFor(100);
     await fresh.meta({ product: 'iPhone 17', total: 50 });
     await fresh.results(ROWS.slice(0, 1));
     await page.clock.runFor(0);
-    expect(await page.evaluate(() => window.__draws.length)).toBe(1);
+    // Drawn at once: had the old search's redraw still been booked, this row would wait for it.
+    expect(await page.evaluate(() => window.__draws)).toEqual([{ t: expect.any(Number), rows: 1 }]);
+    await page.clock.runFor(700);
+    await expect(page.locator('#results tbody tr[data-key]')).toHaveCount(1);             // none of the old rows
   });
 
   test('going Back to the start page cancels a booked redraw', async ({ page, server }) => {
@@ -106,7 +109,7 @@ test.describe('streaming results', () => {
     await stream.results(ROWS.slice(0, 6));
     await page.goBack();
     await page.clock.runFor(700);
-    expect(await page.evaluate(() => renderTimer === null && document.getElementById('results').innerHTML === '')).toBe(true); // eslint-disable-line no-undef
+    expect(await page.evaluate(() => document.getElementById('results').innerHTML)).toBe('');
     await expect(page.locator('#summary')).toBeHidden();
   });
 

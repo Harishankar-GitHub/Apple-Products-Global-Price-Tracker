@@ -37,9 +37,23 @@ const progress = page => page.evaluate(() => {
     label: document.getElementById('progressLabel').textContent, count: count.textContent,
     countHidden: count.getAttribute('aria-hidden'), moving: bar.classList.contains('indeterminate'),
     animation: getComputedStyle(fill).animationName, fillWidth: fill.getBoundingClientRect().width,
-    barWidth: bar.getBoundingClientRect().width, width: fill.style.width,
-    waitTimer: wakeTimer !== null, pingPending }; // eslint-disable-line no-undef -- the page's own variables
+    barWidth: bar.getBoundingClientRect().width, width: fill.style.width };
 });
+
+const WAKE = 'Waking up the server… this can take up to a minute';
+
+/**
+ * The progress counter 4 s later: past the 3 s after which a search still waiting
+ * for the server's first reply shows a seconds counter ("4s", hidden from screen
+ * readers) next to the waking-up message. Compare with NOT_WAITING to check that
+ * nothing is waiting any more. (Runs the page's clock.)
+ */
+async function fourSecondsLater(page) {
+  await page.clock.runFor(4_000);
+  const p = await progress(page);
+  return { secondsCounter: /^\d+s$/.test(p.count), countHidden: p.countHidden };
+}
+const NOT_WAITING = { secondsCounter: false, countHidden: null };
 
 const footer = async page => text(await page.locator('.results-footer').textContent());
 
@@ -52,4 +66,5 @@ const percent = s => Number(String(s).match(/\(\+([\d.]+)%\)/)[1]);
 /** The page's horizontal overflow (0 when nothing scrolls sideways). */
 const sidewaysScroll = page => page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
 
-module.exports = { text, tableRows, row, summary, progress, footer, amount, percent, sidewaysScroll };
+module.exports = { text, tableRows, row, summary, progress, WAKE, fourSecondsLater, NOT_WAITING, footer, amount, percent,
+  sidewaysScroll };

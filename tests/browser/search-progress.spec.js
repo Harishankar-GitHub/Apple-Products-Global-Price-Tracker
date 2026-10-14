@@ -2,9 +2,7 @@
 // "waking up the server" message, waiting for a fetch slot, and errors.
 // Time is controlled with Playwright's clock, so waits are exact and instant.
 const { test, expect, openPaused } = require('./support/fixtures');
-const { progress, tableRows } = require('./support/page-model');
-
-const WAKE = 'Waking up the server… this can take up to a minute';
+const { progress, tableRows, WAKE, fourSecondsLater, NOT_WAITING } = require('./support/page-model');
 const ROWS = [['United States', '🇺🇸', 'USD', '$', 1, 999], ['Japan', '🇯🇵', 'JPY', '¥', 150, 969],
   ['Ireland', '🇮🇪', 'EUR', '€', 0.92, 1318], ['India', '🇮🇳', 'INR', '₹', 84, 1189]]
   .map(([country, flag, currency, symbol, rate, usd]) => ({ country, flag, available: true, currency, symbol,
@@ -12,32 +10,40 @@ const ROWS = [['United States', '🇺🇸', 'USD', '$', 1, 999], ['Japan', '🇯
 const seconds = s => Number(String(s).replace('s', ''));
 
 test.describe('wake-up ping', () => {
-  test('is sent once as soon as the page loads, and the page stays usable meanwhile', async ({ page, health }) => {
+  test('is sent once as soon as the page loads, and the page stays usable meanwhile', async ({ page, server, health }) => {
     health.mode = 'hang';
     const loaded = Date.now();
     await openPaused(page, '/');
     await expect.poll(() => health.pings.length).toBe(1);
     expect(health.pings[0]).toMatchObject({ method: 'GET', url: expect.stringMatching(/\/api\/health$/) });
     expect(health.pings[0].at - loaded).toBeLessThan(2000);
-    let p = await progress(page);
-    expect(p.shown).toBe(false);                                     // nothing shown while it is in flight
-    expect(p.pingPending).toBe(true);
+    expect((await progress(page)).shown).toBe(false);                // nothing shown while it is in flight
     await page.type('#productInput', 'mac');
     await expect(page.locator('#suggestList .suggest-item')).not.toHaveCount(0);
+    const answered = page.waitForResponse('**/api/health');
     health.release();
-    await expect.poll(async () => (await progress(page)).pingPending).toBe(false);
+    await answered;
+    await server.search('MacBook Air');                              // the server answered, so a slow search
+    await page.clock.runFor(2_000);                                  // is given the full 3 s before the message
+    expect((await progress(page)).label).toBe('Resolving "MacBook Air"…');
+    await page.clock.runFor(1_600);
+    expect((await progress(page)).label).toBe(WAKE);
     await page.reload();
     await expect.poll(() => health.pings.length).toBe(2);
   });
 
-  test('gives up after 90 seconds', async ({ page, health }) => {
-    health.mode = 'hang';
-    await openPaused(page, '/');
-    await page.clock.runFor(89_000);
-    expect((await progress(page)).pingPending).toBe(true);
-    await page.clock.runFor(2_000);
-    expect((await progress(page)).pingPending).toBe(false);
-  });
+  for (const [searchAt, stillWaiting] of [[88_500, true], [91_000, false]]) {
+    test(`is given up after 90 seconds (search at ${searchAt / 1000} s)`, async ({ page, server, health }) => {
+      health.mode = 'hang';
+      await openPaused(page, '/');
+      await page.clock.runFor(searchAt);
+      await server.search('MacBook Air');
+      await page.clock.runFor(1_600);
+      // While the ping is unanswered the server is taken to be asleep, so the message comes at once;
+      // once the ping is given up, a search waits the usual 3 s.
+      expect((await progress(page)).label).toBe(stillWaiting ? WAKE : 'Resolving "MacBook Air"…');
+    });
+  }
 });
 
 test.describe('progress', () => {
@@ -46,7 +52,7 @@ test.describe('progress', () => {
     await page.clock.runFor(500);
     const stream = await server.search('MacBook Air');
     let p = await progress(page);
-    expect(p).toMatchObject({ shown: true, moving: true, label: 'Resolving "MacBook Air"…', waitTimer: true });
+    expect(p).toMatchObject({ shown: true, moving: true, label: 'Resolving "MacBook Air"…' });
     expect(p.animation).toMatch(/progressSlide/);
     expect(p.fillWidth / p.barWidth).toBeCloseTo(0.30, 1);           // a moving bar, not an empty track
     await page.clock.runFor(300);
@@ -56,7 +62,7 @@ test.describe('progress', () => {
       expect((await progress(page)).label).toBe('Resolving "MacBook Air" on apple.com…');
     }
     p = await progress(page);
-    expect(p).toMatchObject({ waitTimer: false, moving: true, count: '', countHidden: null });
+    expect(p).toMatchObject({ moving: true, count: '', countHidden: null });
     await stream.meta({ total: 4, rates: { EUR: 0.92 } });
     expect((await progress(page))).toMatchObject({ label: 'Fetching prices for "MacBook Air"…', moving: true });
     await stream.results(ROWS.slice(0, 1));
@@ -67,9 +73,10 @@ test.describe('progress', () => {
     await stream.done();
     await page.clock.runFor(600);
     p = await progress(page);
-    expect(p).toMatchObject({ shown: false, waitTimer: false, moving: false });
+    expect(p).toMatchObject({ shown: false, moving: false });
     await expect(page.locator('#results tbody tr[data-key]')).toHaveCount(4);
     await expect(page.locator('#searchBtn')).toHaveText('Search');
+    expect(await fourSecondsLater(page)).toEqual(NOT_WAITING);
   });
 
   test('cached answer leaves no waiting state behind', async ({ page, server }) => {
@@ -77,8 +84,9 @@ test.describe('progress', () => {
     const stream = await server.search('MacBook Air');
     await stream.complete(ROWS, { meta: { cached: true, ageSeconds: 600, expiresInSeconds: 21_000 }, done: { cached: true } });
     await page.clock.runFor(600);
-    expect(await progress(page)).toMatchObject({ shown: false, waitTimer: false, moving: false, countHidden: null });
+    expect(await progress(page)).toMatchObject({ shown: false, moving: false, countHidden: null });
     expect(await tableRows(page)).toHaveLength(4);
+    expect(await fourSecondsLater(page)).toEqual(NOT_WAITING);
   });
 });
 
@@ -103,8 +111,8 @@ test.describe('waking up the server', () => {
     expect((await progress(page)).label).toBe(WAKE);
     await stream.searching();
     p = await progress(page);
-    expect(p).toMatchObject({ label: 'Resolving "MacBook Air" on apple.com…', count: '', countHidden: null, waitTimer: false });
-    await page.clock.runFor(1_500);
+    expect(p).toMatchObject({ label: 'Resolving "MacBook Air" on apple.com…', count: '', countHidden: null });
+    expect(await fourSecondsLater(page)).toEqual(NOT_WAITING);
     expect((await progress(page)).label).toBe('Resolving "MacBook Air" on apple.com…');
     await stream.complete(ROWS);
     await page.clock.runFor(600);
@@ -141,7 +149,7 @@ test.describe('waking up the server', () => {
       health.mode = mode;
       await openPaused(page, '/');
       await page.clock.runFor(600);
-      expect(await progress(page)).toMatchObject({ shown: false, pingPending: false });
+      expect((await progress(page)).shown).toBe(false);
       await expect(page.locator('#status')).toHaveText('');
       const stream = await server.search('MacBook Air');
       await page.clock.runFor(1_200);
@@ -194,13 +202,14 @@ test.describe('waking up the server', () => {
     const second = await server.search('Mac mini');
     await page.clock.runFor(500);
     const p = await progress(page);
-    expect(p).toMatchObject({ label: WAKE, waitTimer: true });
+    expect(p.label).toBe(WAKE);
     expect(seconds(p.count)).toBeLessThanOrEqual(1);
     expect(await first.closed()).toBe(true);
     expect(await second.closed()).toBe(false);
     await first.searching('MacBook Air');                            // a late reply to the old search is ignored
     await second.searching('Mac mini');
-    expect(await progress(page)).toMatchObject({ label: 'Resolving "Mac mini" on apple.com…', waitTimer: false, count: '' });
+    expect(await progress(page)).toMatchObject({ label: 'Resolving "Mac mini" on apple.com…', count: '' });
+    expect(await fourSecondsLater(page)).toEqual(NOT_WAITING);
   });
 
   test('the search fails while waiting: error shown, waiting stopped, a new search works', async ({ page, server, health }) => {
@@ -213,10 +222,9 @@ test.describe('waking up the server', () => {
     await stream.error();
     await expect(page.locator('#status')).toContainText('Could not reach the API');
     let p = await progress(page);
-    expect(p).toMatchObject({ shown: false, waitTimer: false, moving: false, countHidden: null });
+    expect(p).toMatchObject({ shown: false, moving: false, countHidden: null });
     await expect(page.locator('#searchBtn')).toHaveText('Search');
-    await page.clock.runFor(1_200);
-    expect((await progress(page)).count).toBe('');
+    expect(await fourSecondsLater(page)).toEqual(NOT_WAITING);
     stream = await server.search('MacBook Air');
     await stream.complete(ROWS);
     await expect(page.locator('#results tbody tr[data-key]')).toHaveCount(4);
@@ -231,7 +239,8 @@ test.describe('waking up the server', () => {
     await page.clock.runFor(700);
     await page.goBack();
     await page.clock.runFor(1_500);
-    expect(await progress(page)).toMatchObject({ shown: false, waitTimer: false, count: '', countHidden: null });
+    expect(await progress(page)).toMatchObject({ shown: false, count: '', countHidden: null });
+    expect(await fourSecondsLater(page)).toEqual(NOT_WAITING);
   });
 
 });

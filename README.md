@@ -37,7 +37,7 @@ Backend API (Render): https://apple-products-global-price-tracker.onrender.com
 - **Clear empty states** — if no country returns a price the page says "No prices found for … in any country" (tick *Show unavailable* to see what each country returned); "No countries match these filters" is used only when a filter is the reason.
 - **Closest-match notice** — if the prices are for a different product than the one typed (for example a retired model mapped to the current one), the page says which product it is showing.
 
-Regions and the autocomplete product list are static tables at the top of the script in `docs/index.html` (`COUNTRY_INFO`, `PRODUCTS`) — update them there when Apple's line-up changes. All prices are compared exactly as Apple lists them; note that the US and Canada list prices before sales tax while most other stores include VAT/GST. Preferences are stored in `localStorage` under `apgt:prefs:v1`.
+Regions and the autocomplete product list are static tables in `docs/js/data.js` (`COUNTRY_INFO`, `PRODUCTS`) — update them there when Apple's line-up changes. All prices are compared exactly as Apple lists them; note that the US and Canada list prices before sales tax while most other stores include VAT/GST. Preferences are stored in `localStorage` under `apgt:prefs:v1`.
 
 ---
 
@@ -45,8 +45,28 @@ Regions and the autocomplete product list are static tables at the top of the sc
 
 ```
 apple-global-price-tracker/
-├── docs/
-│   ├── index.html          # Single-file frontend (HTML + CSS + JS)
+├── docs/                   # The website (GitHub Pages), no build step
+│   ├── index.html          # The page's markup
+│   ├── styles.css          # All of its styles
+│   ├── js/                 # Its script, as native JavaScript modules
+│   │   ├── main.js         #   Starts the page and connects the controls to the code
+│   │   ├── config.js       #   The API's address
+│   │   ├── search.js       #   A search: the stream of events from the API
+│   │   ├── wake.js         #   Waking the API, and the "waking up the server" message
+│   │   ├── render.js       #   Drawing the results as they stream in
+│   │   ├── table.js        #   The results table
+│   │   ├── chart.js        #   The chart
+│   │   ├── summary.js      #   The summary bar
+│   │   ├── view.js         #   Ranks, differences and filters, worked out from the results
+│   │   ├── controls.js     #   Home country, currency, regions, sorting, pins
+│   │   ├── search-box.js   #   Suggestions and recent searches
+│   │   ├── links.js        #   Shareable links and history
+│   │   ├── csv.js          #   CSV export
+│   │   ├── prefs.js        #   Preferences saved in the browser
+│   │   ├── state.js        #   The search on screen
+│   │   ├── data.js         #   Countries, regions, currencies, product names
+│   │   ├── format.js       #   Money, durations, percentages
+│   │   └── dom.js          #   Small DOM helpers
 │   └── og.png              # Image shown when a link to the site is shared
 ├── assets/
 │   └── og-image.html       # Source of og.png
@@ -99,11 +119,11 @@ apple-global-price-tracker/
 
 ### Step 2 — Configure the Frontend
 
-In `docs/index.html`, set your deployed API URL:
+In `docs/js/config.js`, set your deployed API URL:
 
 ```js
-const API_BASE = "https://YOUR-API-URL.onrender.com"; // production
-// const API_BASE = "http://localhost:5000";           // local dev
+export const API_BASE = "https://YOUR-API-URL.onrender.com"; // production
+// export const API_BASE = "http://localhost:5000";           // local dev
 ```
 
 Comment out the production line for local development, uncomment before pushing.
@@ -115,6 +135,8 @@ Comment out the production line for local development, uncomment before pushing.
 3. Click **Save**
 
 Your site: `https://<your-username>.github.io/<repo-name>/`
+
+GitHub Pages lets browsers keep each file for up to 10 minutes. A visitor who reloads within minutes of a deploy can briefly get some of the old files with some of the new; reloading again once those minutes have passed fixes it.
 
 **Link previews.** When a link to the site is shared (WhatsApp, Slack, X, LinkedIn, iMessage…), the preview shows `docs/og.png`. Link previewers need the image's full address, so `og:image` in `docs/index.html` names this site's address on GitHub Pages; if you deploy your own copy, change it to `https://<your-username>.github.io/<repo-name>/og.png`. To change the picture, edit `assets/og-image.html` and save a 1200 × 630 screenshot of it over `docs/og.png`:
 
@@ -137,8 +159,14 @@ python app.py
 # PORT=5000 gunicorn app:app
 ```
 
-Open `docs/index.html` directly in a browser or with VS Code Live Server.  
-Make sure `API_BASE` in the HTML points to `http://localhost:5000`.
+Serve the `docs` folder and open it in a browser:
+
+```bash
+python3 -m http.server 8000 --directory docs
+# open http://localhost:8000
+```
+
+The page's script is made of JavaScript modules, which browsers load only over `http://`, so opening `docs/index.html` straight from the disk shows the page without anything working. VS Code Live Server works too. Make sure `API_BASE` in `docs/js/config.js` points to `http://localhost:5000`.
 
 ---
 
@@ -149,7 +177,7 @@ The tests never contact apple.com: `tests/fakes/apple.py` stands in for it (and 
 | Suite | What it covers | Run it |
 |-------|----------------|--------|
 | API (`tests/api`, pytest) | Prices and the sanity floor, product look-up, caches, exchange rates, rate limits, the private status page, serving visitors in parallel, and a real gunicorn server with the production settings | `pytest` |
-| Page (`tests/browser`, Playwright) | The page with the server's events played by the test: progress and wake-up messages, ranking and differences, sorting and filters, table and chart, links and history, the search box, CSV export, link previews | `npx playwright test` |
+| Page (`tests/browser`, Playwright) | The page with the server's events played by the test: progress and wake-up messages, ranking and differences, sorting and filters, table and chart, links and history, the search box, CSV export, link previews, and how the page is put together (every module preloaded, no inline script, works under a strict Content-Security-Policy) | `npx playwright test` |
 | End to end (`tests/browser/end-to-end.spec.js`) | The real page against the real API under gunicorn, with only apple.com faked | part of `npx playwright test` |
 
 ```bash
