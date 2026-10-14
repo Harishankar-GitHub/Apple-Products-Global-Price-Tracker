@@ -50,7 +50,7 @@ apple-global-price-tracker/
 │   ├── styles.css          # All of its styles
 │   ├── js/                 # Its script, as native JavaScript modules
 │   │   ├── main.js         #   Starts the page and connects the controls to the code
-│   │   ├── config.js       #   The API's address
+│   │   ├── config.js       #   The API's address: the live one, or the one on this computer
 │   │   ├── search.js       #   A search: the stream of events from the API
 │   │   ├── wake.js         #   Waking the API, and the "waking up the server" message
 │   │   ├── render.js       #   Drawing the results as they stream in
@@ -126,11 +126,11 @@ apple-global-price-tracker/
 In `docs/js/config.js`, set your deployed API URL:
 
 ```js
-export const API_BASE = "https://YOUR-API-URL.onrender.com"; // production
-// export const API_BASE = "http://localhost:5000";           // local dev
+export const LIVE_API = "https://YOUR-API-URL.onrender.com";
+export const LOCAL_API = "http://localhost:5000";
 ```
 
-Comment out the production line for local development, uncomment before pushing.
+The page picks one by itself: opened from your own computer (`localhost` or `127.0.0.1`) it uses `LOCAL_API`, anywhere else (GitHub Pages) `LIVE_API`. There is nothing to switch before pushing.
 
 ### Step 3 — Enable GitHub Pages
 
@@ -170,7 +170,7 @@ python3 -m http.server 8000 --directory docs
 # open http://localhost:8000
 ```
 
-The page's script is made of JavaScript modules, which browsers load only over `http://`, so opening `docs/index.html` straight from the disk shows the page without anything working. VS Code Live Server works too. Make sure `API_BASE` in `docs/js/config.js` points to `http://localhost:5000`.
+The page's script is made of JavaScript modules, which browsers load only over `http://`, so opening `docs/index.html` straight from the disk shows the page without anything working. VS Code Live Server works too. Opened from `localhost`, the page talks to the API on `http://localhost:5000` (`LOCAL_API` in `docs/js/config.js`); to try the page against the live API instead, open it at your computer's network address (e.g. `http://192.168.1.20:8000`).
 
 ---
 
