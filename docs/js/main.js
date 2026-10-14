@@ -1,5 +1,6 @@
 // Starts the page: connects the controls to the code, sends the wake-up ping, and runs a
 // search from a shared link.
+import "./flags.js";                     // first: flags on Windows, before anything is drawn
 import { initControls, setSort, togglePin } from "./controls.js";
 import { exportCsv } from "./csv.js";
 import { $ } from "./dom.js";
