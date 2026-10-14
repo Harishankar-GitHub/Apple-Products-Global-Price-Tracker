@@ -12,6 +12,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # requirements-dev.txt also lists the API's packages (-r api/requirements.txt), which
+    # the /api entry above already updates: only the test tools are updated from here.
+    allow:
+      - dependency-name: pytest
+      - dependency-name: ruff
     groups:
       test-tools:
         patterns: ["*"]
