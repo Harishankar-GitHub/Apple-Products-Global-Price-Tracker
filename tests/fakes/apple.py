@@ -123,6 +123,7 @@ class FakeApple:
     # ---- what happened ----
     calls: list = field(default_factory=list)            # every URL requested, in order
     connectors: list = field(default_factory=list)       # keyword arguments of every connector created
+    sessions: list = field(default_factory=list)         # every session opened
     peak_connections: int = 0                            # most requests in flight at one moment
 
     def __post_init__(self):
@@ -253,15 +254,21 @@ class FakeSession:
 
     def __init__(self, apple: FakeApple, headers=None, connector: Optional[FakeConnector] = None):
         self.apple = apple
+        apple.sessions.append(self)
         kwargs = connector.kwargs if connector is not None else {}
         self._limit = kwargs.get("limit_per_host") or kwargs.get("limit") or 0
         self._slots: Optional[asyncio.Semaphore] = None
+        self.closed = False
 
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, *exc):
+        await self.close()
         return False
+
+    async def close(self):
+        self.closed = True
 
     def get(self, url: str, params: Optional[dict] = None, timeout=None, allow_redirects=True) -> _Request:
         return _Request(self, url, params)

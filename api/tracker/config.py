@@ -45,15 +45,16 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
-# Connections open to apple.com at the same time. Every request goes to the
-# one host (www.apple.com), so this is what decides how many stores are
-# actually fetched at once: 50 gives each of the 50 stores its own connection.
-# It was 10, which made a search queue through five rounds. Lower it with the
-# APPLE_MAX_CONNECTIONS environment variable if Apple starts refusing requests.
+# Requests one search has open to apple.com at the same time, which decides
+# how many stores it actually fetches at once: 50 gives each of the 50 stores
+# its own connection. It was 10, which made a search queue through five
+# rounds. Lower it with the APPLE_MAX_CONNECTIONS environment variable if
+# Apple starts refusing requests. (The connections themselves are pooled and
+# shared by every search, see web.py.)
 APPLE_MAX_CONNECTIONS = max(1, env_int("APPLE_MAX_CONNECTIONS", 50))
 
 # Searches that fetch from apple.com at the same time. Visitors are served in
-# parallel, but each such search opens up to APPLE_MAX_CONNECTIONS connections
+# parallel, but each such search has up to APPLE_MAX_CONNECTIONS requests open
 # and holds those pages in memory, so a burst of visitors searching for new
 # products is let through a couple at a time instead of multiplying both.
 # Cached results, health checks and everything else are not limited by this.

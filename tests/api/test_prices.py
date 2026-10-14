@@ -1,13 +1,11 @@
 """Reading a store's price: the sanity floor, price extraction, what each store's answer means, and downloads."""
-import asyncio
 import json
 
-import aiohttp
 import pytest
 
 from fakes.apple import RATES, price_block, store_prefix
 from support.client import cached_ttl
-from tracker import config, prices, results_cache, web
+from tracker import config, prices, results_cache
 from tracker.countries import COUNTRIES
 
 SIX_HOURS, FIVE_MINUTES = 6 * 3600, 5 * 60
@@ -249,21 +247,3 @@ def test_stores_are_fetched_side_by_side_up_to_the_connection_limit(server, appl
     apple.peak_connections = 0
     server.search("MacBook Air", via="stream")
     assert apple.peak_connections == connections
-    assert all(c["limit"] == c["limit_per_host"] == connections for c in apple.connectors)
-
-
-# aiohttp says enable_cleanup_closed is unnecessary on Python versions that fixed the
-# underlying bug (3.12.7+, 3.13.1+); Render runs 3.11, where it still matters.
-@pytest.mark.filterwarnings("ignore:enable_cleanup_closed ignored:DeprecationWarning")
-def test_connector_settings_are_accepted_by_aiohttp(monkeypatch):
-    """The settings are passed to the real aiohttp, not just to the fake."""
-    monkeypatch.setattr(aiohttp, "TCPConnector", aiohttp.connector.TCPConnector)
-
-    async def make():
-        connector = web.make_connector()
-        try:
-            return connector.limit, connector.limit_per_host
-        finally:
-            await connector.close()
-
-    assert asyncio.run(make()) == (50, 50)

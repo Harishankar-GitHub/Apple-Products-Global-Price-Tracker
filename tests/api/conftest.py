@@ -14,7 +14,7 @@ import pytest
 from app import app as flask_app
 from fakes.apple import FakeApple, install
 from support.client import LIMITERS, Api, Clock
-from tracker import config, exchange, lookup, results_cache, search
+from tracker import config, exchange, lookup, results_cache, search, web
 
 
 @pytest.fixture(autouse=True)
@@ -24,8 +24,9 @@ def apple(monkeypatch) -> FakeApple:
 
 
 @pytest.fixture(autouse=True)
-def fresh_api(monkeypatch):
-    """Empty caches, limits off, no admin token, every fetch slot free."""
+def fresh_api(monkeypatch, apple):
+    """Empty caches, limits off, no admin token, every fetch slot free, a new connection pool."""
+    web.reset()                     # the next request opens a session to this test's fake apple.com
     for cache in (results_cache, lookup, exchange):
         cache.clear()
     for limiter in LIMITERS:
@@ -34,6 +35,7 @@ def fresh_api(monkeypatch):
     monkeypatch.setattr(config, "ADMIN_TOKEN", "")
     monkeypatch.setattr(search, "fetch_slots", threading.BoundedSemaphore(config.MAX_PARALLEL_FETCHES))
     yield
+    web.reset()
     for cache in (results_cache, lookup, exchange):
         cache.clear()
 
