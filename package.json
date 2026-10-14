@@ -1,6 +1,7 @@
 {
   "name": "apple-products-global-price-tracker-tests",
   "private": true,
+  "license": "MIT",
   "description": "Browser tests for the site in docs/ (tests/browser), run with Playwright.",
   "scripts": {
     "test": "playwright test",

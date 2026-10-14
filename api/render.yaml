@@ -1,9 +1,17 @@
+# The API's settings on Render, as a Blueprint (Render → New → Blueprint, with the
+# Blueprint path api/render.yaml). A service made with New → Web Service does not
+# read this file: its settings are the ones entered in the dashboard (see README.md,
+# "Deploy the API").
 services:
   - type: web
     name: apple-global-price-tracker-api
     runtime: python
+    rootDir: api                          # the service sees only this folder
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn -c gunicorn.conf.py app:app   # threads and timeouts are set in gunicorn.conf.py
     envVars:
+      # Render needs a full version here. It takes precedence over api/.python-version
+      # ("3.11": the newest 3.11 release), which a service without it follows. Keep both
+      # on the same line of releases; tests/api/test_config.py checks that they are.
       - key: PYTHON_VERSION
-        value: 3.11.0
+        value: 3.11.17

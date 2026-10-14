@@ -119,3 +119,25 @@ def test_web_threads(monkeypatch, raw, threads):
 def test_render_starts_gunicorn_with_the_settings_file():
     start = re.search(r"startCommand:\s*(.+?)\s*(#|$)", (API_DIR / "render.yaml").read_text(), re.M).group(1)
     assert start == "gunicorn -c gunicorn.conf.py app:app"
+
+
+def render_setting(name: str) -> str:
+    return re.search(rf"^\s*-?\s*{name}:\s*(.+?)\s*(#|$)", (API_DIR / "render.yaml").read_text(), re.M).group(1)
+
+
+def test_render_builds_and_runs_from_the_api_folder():
+    assert render_setting("rootDir") == "api"
+    assert render_setting("buildCommand") == "pip install -r requirements.txt" and (API_DIR / "requirements.txt").exists()
+
+
+def test_one_python_version_everywhere():
+    """api/.python-version picks the line of releases; render.yaml's PYTHON_VERSION is a full version on it; CI reads the file."""
+    line = (API_DIR / ".python-version").read_text().strip()
+    assert re.fullmatch(r"3\.\d+", line)
+    pinned = re.search(r"key:\s*PYTHON_VERSION\s*\n\s*value:\s*(\S+)", (API_DIR / "render.yaml").read_text()).group(1)
+    assert re.fullmatch(rf"{re.escape(line)}\.\d+", pinned), pinned
+    workflow = (API_DIR.parent / ".github" / "workflows" / "ci.yml").read_text()
+    assert workflow.count("uses: actions/setup-python@") == workflow.count("python-version-file: api/.python-version") == 3
+    assert "python-version:" not in workflow
+    pyproject = (API_DIR.parent / "pyproject.toml").read_text()
+    assert f'target-version = "py{line.replace(".", "")}"' in pyproject            # ruff checks for that version
