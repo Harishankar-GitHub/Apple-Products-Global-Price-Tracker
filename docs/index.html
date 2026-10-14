@@ -78,13 +78,13 @@
     <ul class="suggest-list" id="suggestList" role="listbox" aria-label="Product suggestions" hidden></ul>
   </div>
 
-  <div class="suggestions" id="quickSearches" role="list" aria-label="Quick searches">
-    <span class="chip" role="listitem" data-quick="MacBook Air">MacBook Air</span>
-    <span class="chip" role="listitem" data-quick="iPhone 17">iPhone 17</span>
-    <span class="chip" role="listitem" data-quick="Mac mini">Mac mini</span>
+  <div class="suggestions" id="quickSearches" role="group" aria-label="Quick searches">
+    <button type="button" class="chip" data-quick="MacBook Air">MacBook Air</button>
+    <button type="button" class="chip" data-quick="iPhone 17">iPhone 17</button>
+    <button type="button" class="chip" data-quick="Mac mini">Mac mini</button>
   </div>
 
-  <div class="recent" id="recentWrap" aria-label="Recent searches" style="display:none"></div>
+  <div class="recent" id="recentWrap" role="group" aria-label="Recent searches" style="display:none"></div>
 </section>
 </div>
 

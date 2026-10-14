@@ -58,6 +58,36 @@ test.describe('suggestions', () => {
   });
 });
 
+test.describe('quick searches', () => {
+  test('are buttons in a labelled group, and clicking one searches for it', async ({ page, server }) => {
+    const group = page.getByRole('group', { name: 'Quick searches' });
+    await expect(group.getByRole('button')).toHaveText(['MacBook Air', 'iPhone 17', 'Mac mini']);
+    const font = el => getComputedStyle(el).fontFamily;
+    expect(await group.getByRole('button').first().evaluate(font)).toBe(await page.locator('body').evaluate(font));
+    await group.getByRole('button', { name: 'iPhone 17' }).click();
+    await expect(page.locator('#productInput')).toHaveValue('iPhone 17');
+    expect(await (await server.latest()).url()).toContain('product=iPhone%2017');
+  });
+
+  test('work from the keyboard: Tab to one, then Enter or Space', async ({ page, server }) => {
+    await page.focus('#searchBtn');
+    await page.keyboard.press('Tab');
+    const first = page.locator('#quickSearches [data-quick="MacBook Air"]');
+    await expect(first).toBeFocused();
+    expect(await first.evaluate(el => [getComputedStyle(el).outlineStyle, getComputedStyle(el).outlineColor]))
+      .toEqual(['solid', 'rgb(0, 113, 227)']);                         // the page's own focus ring
+    await page.keyboard.press('Enter');
+    expect(await (await server.latest()).url()).toContain('product=MacBook%20Air');
+
+    await page.focus('#quickSearches [data-quick="iPhone 17"]');
+    await page.keyboard.press('Tab');
+    await expect(page.locator('#quickSearches [data-quick="Mac mini"]')).toBeFocused();
+    await page.keyboard.press('Space');
+    expect(await server.count()).toBe(2);
+    expect(await (await server.latest()).url()).toContain('product=Mac%20mini');
+  });
+});
+
 test.describe('recent searches', () => {
   test('newest first, no duplicates (any case), at most 6, remembered', async ({ page, server }) => {
     await expect(page.locator('#recentWrap')).toBeHidden();
