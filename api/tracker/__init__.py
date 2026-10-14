@@ -9,7 +9,7 @@ Modules, roughly in the order a search uses them:
   lookup         product name → Apple's page for it (its slug), with a cache of answers
   results_cache  finished result sets per product
   caches         the cache class those two keep their answers in
-  exchange       exchange rates, kept for 30 minutes
+  exchange       exchange rates, fetched again in the background every 30 minutes
   prices         reading a price off a store's page, and fetching every store at once
   web            one event loop and connection pool for apple.com
   countries      the 50 stores, from countries.json: URL prefix, currency, symbol, flag

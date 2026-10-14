@@ -81,7 +81,7 @@ apple-global-price-tracker/
 │   │   ├── prices.py       #   Reading a price off a page; fetching all 50 stores at once
 │   │   ├── results_cache.py #  Finished result sets per product
 │   │   ├── caches.py       #   The cache class both of those use: an expiry per entry, a size cap
-│   │   ├── exchange.py     #   Exchange rates, kept for 30 minutes
+│   │   ├── exchange.py     #   Exchange rates, fetched again in the background every 30 minutes
 │   │   ├── web.py          #   One event loop and connection pool for apple.com
 │   │   ├── countries.json  #   The one table of countries, for the API and (copied) the page
 │   │   ├── countries.py    #   Reads it: the 50 stores, their URL prefix, currency, flag
@@ -396,6 +396,8 @@ Three in-memory caches reduce latency and external HTTP calls:
 | Exchange rates | global | 30 min | USD conversion rates from open.er-api.com |
 | Slug resolution | product name | depends on the answer (see below) | Resolved apple.com slug per product name |
 | Price results | slug | 6 hours (5 min if incomplete) | Full 50-country result set |
+
+Exchange rates older than 30 minutes are fetched again in the background: the search that finds them old still uses them, so it does not wait for the exchange-rate service, and the searches after it get the new ones. Only the first search after the server starts waits for rates. If the download fails, the rates held are kept.
 
 On a cache hit for price results, the SSE stream replays cached rows as rapid-fire events — the browser still sees the same `searching → meta → result × N → done` flow, just near-instantly.
 
