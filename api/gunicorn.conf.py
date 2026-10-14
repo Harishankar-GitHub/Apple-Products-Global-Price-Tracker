@@ -40,5 +40,8 @@ graceful_timeout = 30
 
 keepalive = 5
 
-# No access log (gunicorn's default): it would write every visitor's address.
-# The API logs what it does itself, without them (see LOG_LEVEL in tracker/config.py).
+# The access log (a line per request) is not set here. On Render it is on anyway:
+# Render sets GUNICORN_CMD_ARGS="--preload --access-logfile - --bind=0.0.0.0:10000",
+# which takes precedence over this file. Its lines show Render's proxy (127.0.0.1)
+# as the address, not the visitor's. The API's own log is set by LOG_LEVEL
+# (see tracker/config.py).
