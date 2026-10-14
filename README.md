@@ -528,3 +528,9 @@ Comparing the dollar figure directly, as before, went wrong in both directions: 
 - Some countries may not carry certain products (shown as "Not available in this country")
 - Exchange rates are fetched live and may fluctuate
 - Not affiliated with Apple Inc. — for personal/educational use only
+
+---
+
+## License
+
+[MIT](LICENSE) © 2026 Harishankar Bhat R
