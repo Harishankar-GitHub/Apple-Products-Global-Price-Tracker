@@ -37,7 +37,7 @@ Backend API (Render): https://apple-products-global-price-tracker.onrender.com
 - **Clear empty states** — if no country returns a price the page says "No prices found for … in any country" (tick *Show unavailable* to see what each country returned); "No countries match these filters" is used only when a filter is the reason.
 - **Closest-match notice** — if the prices are for a different product than the one typed (for example a retired model mapped to the current one), the page says which product it is showing.
 
-Regions and the autocomplete product list are static tables in `docs/js/data.js` (`COUNTRY_INFO`, `PRODUCTS`) — update them there when Apple's line-up changes. All prices are compared exactly as Apple lists them; note that the US and Canada list prices before sales tax while most other stores include VAT/GST. Preferences are stored in `localStorage` under `apgt:prefs:v1`.
+The countries are one table, `api/tracker/countries.json`: name, ISO code, region, the store's URL prefix on apple.com, currency and symbol (flags are worked out from the ISO code). The API reads it; the page gets a copy, `docs/js/countries.js`, because GitHub Pages serves only `docs/` and Render only `api/`. To add or change a store, edit the table and run `python3 scripts/sync_countries.py`, which also updates the list under [Supported Countries](#supported-countries); the tests fail if a copy is out of date. The product names offered as you type are in `docs/js/data.js` (`PRODUCTS`) — update them when Apple's line-up changes. All prices are compared exactly as Apple lists them; note that the US and Canada list prices before sales tax while most other stores include VAT/GST. Preferences are stored in `localStorage` under `apgt:prefs:v1`.
 
 ---
 
@@ -64,7 +64,8 @@ apple-global-price-tracker/
 │   │   ├── csv.js          #   CSV export
 │   │   ├── prefs.js        #   Preferences saved in the browser
 │   │   ├── state.js        #   The search on screen
-│   │   ├── data.js         #   Countries, regions, currencies, product names
+│   │   ├── data.js         #   Countries, regions and currencies (from countries.js), product names
+│   │   ├── countries.js    #   Copy of api/tracker/countries.json, written by scripts/sync_countries.py
 │   │   ├── format.js       #   Money, durations, percentages
 │   │   └── dom.js          #   Small DOM helpers
 │   └── og.png              # Image shown when a link to the site is shared
@@ -81,7 +82,8 @@ apple-global-price-tracker/
 │   │   ├── results_cache.py #  Finished result sets per product
 │   │   ├── exchange.py     #   Exchange rates, kept for 30 minutes
 │   │   ├── web.py          #   One event loop and connection pool for apple.com
-│   │   ├── countries.py    #   The 50 stores: URL prefix, currency, flag
+│   │   ├── countries.json  #   The one table of countries, for the API and (copied) the page
+│   │   ├── countries.py    #   Reads it: the 50 stores, their URL prefix, currency, flag
 │   │   └── config.py       #   Every setting, including the environment variables
 │   ├── gunicorn.conf.py    # Server settings: threads and timeouts
 │   ├── requirements.txt
@@ -91,6 +93,8 @@ apple-global-price-tracker/
 │   ├── browser/            # Page and end-to-end tests (Playwright)
 │   ├── fakes/apple.py      # Stand-in for apple.com and the exchange-rate service
 │   └── servers/fake_api.py # The API with apple.com faked, for gunicorn and browser tests
+├── scripts/
+│   └── sync_countries.py   # Copies the country table to the page and the README
 ├── .github/                # CI workflow and Dependabot settings
 ├── pyproject.toml          # pytest and ruff settings
 ├── requirements-dev.txt    # Test and lint tools
@@ -484,14 +488,18 @@ Comparing the dollar figure directly, as before, went wrong in both directions: 
 
 ---
 
-## Supported Countries (50)
+## Supported Countries
+
+<!-- countries:start (written by scripts/sync_countries.py from api/tracker/countries.json) -->
+50 Apple stores:
 
 | Region | Countries |
 |--------|-----------|
-| Americas | 🇺🇸 US · 🇨🇦 Canada · 🇲🇽 Mexico · 🇧🇷 Brazil · 🇨🇱 Chile · 🇨🇴 Colombia |
-| Europe | 🇬🇧 UK · 🇩🇪 Germany · 🇫🇷 France · 🇮🇹 Italy · 🇪🇸 Spain · 🇳🇱 Netherlands · 🇦🇹 Austria · 🇵🇹 Portugal · 🇮🇪 Ireland · 🇸🇪 Sweden · 🇳🇴 Norway · 🇩🇰 Denmark · 🇵🇱 Poland · 🇹🇷 Turkey · 🇨🇿 Czech Republic · 🇭🇺 Hungary · 🇷🇴 Romania · 🇫🇮 Finland · 🇧🇪 Belgium · 🇱🇺 Luxembourg · 🇬🇷 Greece · 🇨🇭 Switzerland |
-| Asia Pacific | 🇯🇵 Japan · 🇨🇳 China · 🇭🇰 Hong Kong · 🇹🇼 Taiwan · 🇰🇷 South Korea · 🇸🇬 Singapore · 🇲🇾 Malaysia · 🇹🇭 Thailand · 🇮🇳 India · 🇦🇺 Australia · 🇳🇿 New Zealand · 🇵🇭 Philippines · 🇮🇩 Indonesia · 🇻🇳 Vietnam |
-| Middle East & Africa | 🇦🇪 UAE · 🇸🇦 Saudi Arabia · 🇶🇦 Qatar · 🇰🇼 Kuwait · 🇧🇭 Bahrain · 🇴🇲 Oman · 🇮🇱 Israel · 🇿🇦 South Africa |
+| Americas | 🇺🇸 United States · 🇨🇦 Canada · 🇲🇽 Mexico · 🇧🇷 Brazil · 🇨🇱 Chile · 🇨🇴 Colombia |
+| Europe | 🇬🇧 United Kingdom · 🇩🇪 Germany · 🇫🇷 France · 🇳🇱 Netherlands · 🇪🇸 Spain · 🇮🇹 Italy · 🇦🇹 Austria · 🇮🇪 Ireland · 🇵🇹 Portugal · 🇸🇪 Sweden · 🇳🇴 Norway · 🇩🇰 Denmark · 🇵🇱 Poland · 🇹🇷 Turkey · 🇨🇿 Czech Republic · 🇭🇺 Hungary · 🇷🇴 Romania · 🇫🇮 Finland · 🇧🇪 Belgium · 🇱🇺 Luxembourg · 🇬🇷 Greece · 🇨🇭 Switzerland |
+| Asia Pacific | 🇯🇵 Japan · 🇰🇷 South Korea · 🇭🇰 Hong Kong · 🇹🇼 Taiwan · 🇨🇳 China · 🇵🇭 Philippines · 🇹🇭 Thailand · 🇮🇳 India · 🇸🇬 Singapore · 🇲🇾 Malaysia · 🇦🇺 Australia · 🇳🇿 New Zealand · 🇻🇳 Vietnam · 🇮🇩 Indonesia |
+| Middle East & Africa | 🇦🇪 United Arab Emirates · 🇸🇦 Saudi Arabia · 🇮🇱 Israel · 🇿🇦 South Africa · 🇰🇼 Kuwait · 🇶🇦 Qatar · 🇧🇭 Bahrain · 🇴🇲 Oman |
+<!-- countries:end -->
 
 ---
 
