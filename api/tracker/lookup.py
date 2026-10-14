@@ -14,6 +14,7 @@ to the wrong page) until the server restarts:
                                           "try again", never as "not found"
 """
 import asyncio
+import logging
 import math
 import re
 import time
@@ -25,6 +26,8 @@ import aiohttp
 from . import config, web
 from .caches import Entry, TTLCache
 from .prices import build_shop_url
+
+log = logging.getLogger(__name__)
 
 # Names that plain name → slug conversion gets wrong, including older models
 # that should lead to the one Apple sells now. Each entry is a hint, not a
@@ -116,7 +119,8 @@ def match_info(product_name: str, slug: str) -> dict:
 # A page check that ends in one of these told us something definite ("the page
 # exists" / "there is no such page"). Anything else — a timeout, a network
 # error, 403, 429, 5xx — means Apple could not be asked, and is noted in the
-# `failures` list the checks are given so the caller knows its answer is unsure.
+# `failures` list the checks are given ("<url> (<what happened>)") so the caller
+# knows its answer is unsure, and can log why.
 _DEFINITE_STATUSES = (200, 404, 410)
 
 
@@ -134,10 +138,10 @@ async def _async_probe(session: aiohttp.ClientSession, url: str,
                 final_slug  = urlparse(str(r.url)).path.strip("/").split("/")[0]
                 return bool(probed_slug and probed_slug == final_slug)
             if r.status not in _DEFINITE_STATUSES and failures is not None:
-                failures.append(url)
-    except Exception:
+                failures.append(f"{url} (HTTP {r.status})")
+    except Exception as exc:
         if failures is not None:
-            failures.append(url)
+            failures.append(f"{url} ({web.describe(exc)})")
     return False
 
 
@@ -148,11 +152,11 @@ async def _async_page_is_for(session: aiohttp.ClientSession, url: str, slug: str
         async with session.get(url, timeout=aiohttp.ClientTimeout(total=config.CHECK_TIMEOUT),
                                allow_redirects=True) as r:
             if r.status not in _DEFINITE_STATUSES and failures is not None:
-                failures.append(url)
+                failures.append(f"{url} (HTTP {r.status})")
             return r.status == 200 and slug in urlparse(str(r.url)).path
-    except Exception:
+    except Exception as exc:
         if failures is not None:
-            failures.append(url)
+            failures.append(f"{url} ({web.describe(exc)})")
         return False
 
 
@@ -170,7 +174,7 @@ async def _override_is_live(session: aiohttp.ClientSession, slug: str, category:
     return product_ok or shop_ok
 
 
-async def _async_resolve_slug(product_name: str) -> tuple[Optional[tuple[str, str]], bool]:
+async def _async_resolve_slug(product_name: str, failures: list[str]) -> tuple[Optional[tuple[str, str]], bool]:
     """
     All apple.com probing runs concurrently, on the shared event loop and
     connections (see web.py). Returns (result, unsure). `unsure` is True when
@@ -178,12 +182,11 @@ async def _async_resolve_slug(product_name: str) -> tuple[Optional[tuple[str, st
     so the answer — a fallback page, or "not found" — might be different once
     Apple responds again. An exact match is never unsure. Failures of the
     suggestions service alone do not count: it is only a hint, and the page
-    checks decide.
+    checks decide. Every check that failed is added to `failures`.
     """
     override  = SLUG_OVERRIDES.get(product_name.strip().lower())
     candidate = name_to_slug(product_name)
     category  = infer_category(candidate)
-    failures: list = []
 
     session = web.session()
 
@@ -200,6 +203,8 @@ async def _async_resolve_slug(product_name: str) -> tuple[Optional[tuple[str, st
                 params=params,
                 timeout=aiohttp.ClientTimeout(total=config.SUGGESTIONS_TIMEOUT),
             ) as r:
+                if r.status != 200:
+                    log.warning("Apple's search suggestions answered HTTP %d for %r", r.status, product_name)
                 if r.status == 200:
                     data = await r.json(content_type=None)
                     for s in data.get("suggestions", []):
@@ -210,8 +215,8 @@ async def _async_resolve_slug(product_name: str) -> tuple[Optional[tuple[str, st
                             if slug and slug not in ("shop", "store", "search"):
                                 if await _async_probe(session, f"https://www.apple.com/{slug}/", failures):
                                     return (slug, infer_category(slug))
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("Apple's search suggestions failed for %r (%s)", product_name, web.describe(exc))
         return None
 
     direct_ok, suggestion_result = await asyncio.gather(
@@ -283,7 +288,9 @@ def discover_slug(product_name: str) -> SlugLookup:
     if entry is not None:
         return _as_lookup(entry)                    # cache hit
 
-    result, unsure = web.run(_async_resolve_slug(product_name))
+    failures: list[str] = []
+    result, unsure = web.run(_async_resolve_slug(product_name, failures))
+    _log_look_up(product_name, result, unsure, failures)
     if result and not unsure:
         ttl = None                                  # certain: keep
     elif result:
@@ -293,6 +300,20 @@ def discover_slug(product_name: str) -> SlugLookup:
     else:
         ttl = config.SLUG_TTL_FAILED                # Apple did not answer: unknown
     return _as_lookup(answers.put(cache_key, Answer(result, failed=result is None and unsure), ttl))
+
+
+def _log_look_up(product_name: str, result: Optional[tuple[str, str]], unsure: bool, failures: list[str]) -> None:
+    failed = f"{len(failures)} check{'s' if len(failures) != 1 else ''} failed: " + ", ".join(failures[:3]) + (
+        f" and {len(failures) - 3} more" if len(failures) > 3 else "")
+    if result and not unsure:
+        log.info("Looked up %r: %s", product_name, result[0])
+    elif result:
+        log.warning("Looked up %r: %s for now, as %s; looked up again in %d min",
+                    product_name, result[0], failed, config.SLUG_TTL_UNSURE // 60)
+    elif not unsure:
+        log.info("Looked up %r: no page on apple.com", product_name)
+    else:
+        log.warning("Could not look up %r, as %s", product_name, failed)
 
 
 def slug_is_known(product_name: str) -> bool:

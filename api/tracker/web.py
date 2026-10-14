@@ -13,6 +13,7 @@ look-up to the fetch that follows it, and from one search to the next.
                 (from a request thread, never from the loop itself)
   submit(coro)  start a coroutine on the loop and carry on
   session()     the shared session, for code running on the loop
+  describe(exc) a request's failure in a few words, for the log
 
 The loop starts the first time it is needed, so in gunicorn it starts inside
 the worker process, never in the master before the fork.
@@ -56,6 +57,11 @@ def session() -> aiohttp.ClientSession:
     if _session is None or _session.closed:
         _session = aiohttp.ClientSession(headers=config.HEADERS, connector=make_connector())
     return _session
+
+
+def describe(exc: BaseException) -> str:
+    """A failed request in a few words, for the log: "timeout", "ClientConnectorError", ..."""
+    return "timeout" if isinstance(exc, asyncio.TimeoutError) else type(exc).__name__
 
 
 def _event_loop() -> asyncio.AbstractEventLoop:

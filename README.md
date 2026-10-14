@@ -348,6 +348,7 @@ Nothing has to be configured: the limits above are on by default and `/api/cache
 | `APPLE_MAX_CONNECTIONS` | Requests one search has open to apple.com at once, i.e. how many stores it fetches in parallel | `50` |
 | `MAX_PARALLEL_FETCHES` | Searches that fetch from apple.com at the same time; others wait for a free slot (minimum 1) | `2` |
 | `WEB_THREADS` | Requests the server handles at the same time (minimum 1) | `16` |
+| `LOG_LEVEL` | How much the API writes to its log (Render: **Logs**): `INFO` is a line per look-up and per fetch, with each store that failed and why; `WARNING` is only the problems. Visitors' addresses are never logged | `INFO` |
 
 **Setting a variable on Render**
 

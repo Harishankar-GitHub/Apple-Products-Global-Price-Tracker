@@ -32,6 +32,13 @@ RATE_GLOBAL_FETCHES_PER_10MIN = env_int("RATE_LIMIT_GLOBAL_FETCHES_PER_10MIN", 6
 # product slugs). Unset → the detailed view is never available.
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "")
 
+# What the API writes to its log (standard error, which Render shows under
+# Logs): DEBUG, INFO (the default: a line per look-up and per fetch), WARNING
+# (only problems) or ERROR. Visitors' addresses are never written to it.
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
+if LOG_LEVEL not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+    LOG_LEVEL = "INFO"
+
 # ---------------------------------------------------------------------------
 # Talking to apple.com
 # ---------------------------------------------------------------------------

@@ -15,11 +15,30 @@ Modules, roughly in the order a search uses them:
   countries      the 50 stores, from countries.json: URL prefix, currency, symbol, flag
   config         every setting, including the environment variables
 """
+import logging
+
 from flask import Flask
 from flask_cors import CORS
 
+from . import config
+
+
+def configure_logging() -> None:
+    """
+    The API's messages (the `tracker.*` loggers) go to standard error, in the
+    format gunicorn uses for its own, at config.LOG_LEVEL.
+    """
+    log = logging.getLogger(__name__)
+    if not log.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("[%(asctime)s] [%(process)d] [%(levelname)s] %(name)s: %(message)s",
+                                               "%Y-%m-%d %H:%M:%S %z"))
+        log.addHandler(handler)
+    log.setLevel(config.LOG_LEVEL)
+
 
 def create_app() -> Flask:
+    configure_logging()
     app = Flask(__name__)
     CORS(app)
     from .routes import bp

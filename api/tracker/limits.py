@@ -16,9 +16,11 @@ memory, like the caches, and are per process.
 
 Refusals are returned as the payload to send: {"error", "rateLimited",
 "retryAfterSeconds"}. The routes decide how to send it (HTTP 429, or an
-error event in the stream).
+error event in the stream). Each refusal is logged, without the visitor's
+address.
 """
 import hmac
+import logging
 import math
 import threading
 import time
@@ -26,6 +28,8 @@ from collections import deque
 from typing import Optional
 
 from . import config
+
+log = logging.getLogger(__name__)
 
 
 class SlidingWindowLimiter:
@@ -127,6 +131,7 @@ def check_request(client: str) -> Optional[dict]:
     """Limit 1. Call once per request: counts it and returns None, or returns the refusal."""
     wait = request_limiter.hit(client)
     if wait:
+        log.info("Refused a visitor: over %d requests a minute", request_limiter.limit)
         return _refusal(f"Too many requests. Please try again in {human_wait(wait)}.", wait)
     return None
 
@@ -138,10 +143,13 @@ def charge_fetch(client: str) -> Optional[dict]:
     """
     wait = fetch_limiter.retry_after(client)
     if wait:
+        log.info("Refused a visitor: over %d look-ups in 10 minutes", fetch_limiter.limit)
         return _refusal("You have looked up a lot of products in a short time. "
                         f"Please try again in {human_wait(wait)}.", wait)
     wait = global_fetch_limiter.retry_after("all")
     if wait:
+        log.warning("Refused a visitor: every visitor together is over %d look-ups in 10 minutes; "
+                    "new products can be looked up again in %s", global_fetch_limiter.limit, human_wait(wait))
         return _refusal("The service is busy fetching prices for other visitors. "
                         f"Please try again in {human_wait(wait)}.", wait)
     fetch_limiter.record(client)

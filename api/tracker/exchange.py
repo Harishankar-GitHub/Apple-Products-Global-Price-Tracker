@@ -11,6 +11,7 @@ If the service cannot be reached, the last rates fetched are used; if there
 are none, prices are sent as listed, without a dollar figure.
 """
 import concurrent.futures
+import logging
 import math
 import threading
 import time
@@ -20,6 +21,8 @@ import aiohttp
 
 from . import config, web
 from .countries import COUNTRIES
+
+log = logging.getLogger(__name__)
 
 
 class _Held(NamedTuple):
@@ -37,6 +40,7 @@ _generation = 0                     # moves on with clear(), so a download start
 async def _fetch(generation: int) -> dict[str, float]:
     """Download the rates and hold them. Runs on the shared event loop; returns the rates held after it."""
     global _held
+    problem = None
     try:
         async with web.session().get(config.EXCHANGE_API,
                                      timeout=aiohttp.ClientTimeout(total=config.RATES_TIMEOUT)) as r:
@@ -46,8 +50,18 @@ async def _fetch(generation: int) -> dict[str, float]:
                     with _lock:
                         if generation == _generation:
                             _held = _Held(rates, time.monotonic())
-    except Exception:
-        pass  # keep the rates held, if any
+                    log.info("Exchange rates updated: %d currencies", len(rates))
+                else:
+                    problem = "the answer had no rates in it"
+            else:
+                problem = f"HTTP {r.status}"
+    except Exception as exc:
+        problem = web.describe(exc)
+    if problem:                                     # keep the rates held, if any
+        held = _held
+        log.warning("Exchange rates not updated (%s); %s", problem,
+                    f"still using the ones from {round((time.monotonic() - held.fetched_at) / 60)} min ago"
+                    if held.rates else "there are none, so prices are sent without a dollar figure")
     return _held.rates
 
 

@@ -96,6 +96,8 @@ class StoreRow(NamedTuple):
     row: dict           # what is sent to the page and cached
     transient: bool     # True: this answer may change soon (Apple failed to answer, or no exchange
                         # rate), so the result set is kept for minutes rather than hours
+    problem: Optional[str] = None   # for the log: what went wrong ("timeout", "HTTP 503", "no price
+                                    # on the page", ...); None for a price, or a product not sold there
 
 
 async def _fetch_store(
@@ -120,9 +122,9 @@ async def _fetch_store(
     flag      = COUNTRY_FLAGS.get(country, "🏳")
     timeout   = aiohttp.ClientTimeout(total=config.PAGE_TIMEOUT)
 
-    async def _fetch(url: str) -> tuple[Optional[float], str]:
+    async def _fetch(url: str) -> tuple[Optional[float], str, str]:
         """
-        Download one page once and return (price, outcome). Outcome is:
+        Download one page once and return (price, outcome, what happened). Outcome is:
           "ok"      — a page for this product (the price may still be None)
           "missing" — 404, or redirected to a different page: Apple sends
                       products a country does not sell to the line-up page,
@@ -134,28 +136,32 @@ async def _fetch_store(
             async with connections, session.get(url, timeout=timeout, allow_redirects=True) as r:
                 if r.status == 200:
                     if slug not in urlparse(str(r.url)).path:
-                        return None, "missing"
+                        return None, "missing", "redirected away"
                     html = await r.text()
-                    return extract_low_price(html, min_price), "ok"
-                return None, ("missing" if r.status == 404 else "error")
-        except Exception:
-            return None, "error"
+                    return extract_low_price(html, min_price), "ok", "no price on the page"
+                return None, ("missing" if r.status == 404 else "error"), f"HTTP {r.status}"
+        except Exception as exc:
+            return None, "error", web.describe(exc)
 
     # The buy page normally carries the price, so it is fetched first and the
     # (much larger) product page only if the buy page had none. Each page is
     # downloaded at most once: what the product page answered also tells a
     # product this country does not sell from one whose price could not be read.
-    price_val, shop_outcome = await _fetch(shop_url)
+    price_val, shop_outcome, shop_said = await _fetch(shop_url)
     if price_val is None:
-        price_val, prod_outcome = await _fetch(prod_url)
+        price_val, prod_outcome, prod_said = await _fetch(prod_url)
 
     if price_val is None:
         if prod_outcome == "missing":
             return StoreRow({"country": country, "flag": flag, "available": False,
                              "reason": "Not available in this country", "url": prod_url}, transient=False)
+        problem = (shop_said if shop_said == prod_said
+                   else f"buy page: {shop_said}, product page: {prod_said}")
+        if no_rate:
+            problem += f"; no usable exchange rate for {currency}"
         return StoreRow({"country": country, "flag": flag, "available": False,
                          "reason": "Price not found", "url": prod_url},
-                        transient="error" in (shop_outcome, prod_outcome) or no_rate)
+                        transient="error" in (shop_outcome, prod_outcome) or no_rate, problem=problem)
 
     rate      = usd_rate(rates, currency)
     usd_price = (round(price_val / rate, 2) or None) if rate else None   # never 0.00
@@ -173,7 +179,8 @@ async def _fetch_store(
         "usdPrice":            usd_price,     # null: no exchange rate, so not ranked
         "url":                 prod_url,
     }
-    return StoreRow(row, transient=usd_price is None)          # see no_rate above
+    return StoreRow(row, transient=usd_price is None,          # see no_rate above
+                    problem=None if usd_price else f"no usable exchange rate for {currency}")
 
 
 async def fetch_every_store(slug: str, category: str, rates: dict[str, float]) -> AsyncIterator[StoreRow]:
