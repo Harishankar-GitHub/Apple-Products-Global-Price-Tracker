@@ -29,7 +29,7 @@ def test_env_int(monkeypatch, raw, expected):
 
 def imported_value(expression: str, env: dict) -> str:
     """Import the API in a fresh interpreter with `env` set and evaluate `expression`."""
-    clean = {k: v for k, v in os.environ.items() if not k.startswith(("RATE_LIMIT_", "APPLE_", "MAX_PARALLEL", "ADMIN_"))}
+    clean = {k: v for k, v in os.environ.items() if not k.startswith(("RATE_LIMIT_", "APPLE_", "MAX_PARALLEL", "ADMIN_", "LOG_"))}
     clean["PYTHONPATH"] = os.pathsep.join(filter(None, [str(API_DIR), os.environ.get("PYTHONPATH")]))
     out = subprocess.run([sys.executable, "-c", f"import app; from tracker import config, limits, search; print({expression})"],
                          env={**clean, **env}, capture_output=True, text=True, check=True)
@@ -48,6 +48,9 @@ def imported_value(expression: str, env: dict) -> str:
         ("MAX_PARALLEL_FETCHES", "5", "(config.MAX_PARALLEL_FETCHES, search.fetch_slots._value)", "(5, 5)"),
         ("MAX_PARALLEL_FETCHES", "0", "config.MAX_PARALLEL_FETCHES", "1"),
         ("ADMIN_TOKEN", "s3cret", "config.ADMIN_TOKEN", "s3cret"),
+        ("LOG_LEVEL", "warning", "__import__('logging').getLogger('tracker').level", "30"),
+        ("LOG_LEVEL", "", "__import__('logging').getLogger('tracker').level", "20"),
+        ("LOG_LEVEL", "loud", "__import__('logging').getLogger('tracker').level", "20"),
     ],
 )
 def test_environment_variable_is_used(variable, value, expression, expected):
@@ -105,6 +108,7 @@ def test_gunicorn_settings(monkeypatch):
     assert conf["timeout"] == 120                    # a heartbeat with threads, not a per-request limit
     assert conf["graceful_timeout"] == 30
     assert "bind" not in conf                        # gunicorn then listens on Render's PORT
+    assert "accesslog" not in conf                   # off: it would write every visitor's address
 
 
 @pytest.mark.parametrize(("raw", "threads"), [("4", 4), ("32", 32), ("0", 1), ("-2", 1), ("abc", 16), ("", 16)])

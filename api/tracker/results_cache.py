@@ -7,17 +7,16 @@ country failed for a temporary reason, or where no country had a price, is
 kept for config.RESULTS_TTL_SHORT (5 minutes), so a bad fetch is retried soon
 instead of being served for hours.
 """
-import threading
 import time
 from typing import Optional
 
 from . import config
+from .caches import TTLCache
 from .exchange import rates_for_client, usd_rate
 
-# slug → {"ts": monotonic time stored, "ttl": seconds, "payload": {...}}
-# Oldest first: a set stored again moves to the end.
-_entries: dict[str, dict] = {}
-_lock = threading.RLock()   # requests are served by several threads at once
+# Product slug → its result set (the payload build_payload makes). Capped at
+# config.RESULTS_CACHE_MAX sets.
+result_sets: TTLCache[dict] = TTLCache(max_size=lambda: config.RESULTS_CACHE_MAX)
 
 
 def sorted_results(rows: list[dict]) -> list[dict]:
@@ -41,26 +40,17 @@ def put(slug: str, payload: dict, complete: bool) -> int:
     `complete` is False when any country failed for a temporary reason."""
     has_price = any(r.get("available") for r in payload["results"])
     ttl = config.RESULTS_TTL if (complete and has_price) else config.RESULTS_TTL_SHORT
-    with _lock:
-        _entries.pop(slug, None)                    # re-insert so it counts as newest
-        _entries[slug] = {"ts": time.monotonic(), "ttl": ttl, "payload": payload}
-        while len(_entries) > config.RESULTS_CACHE_MAX:   # drop the oldest result sets
-            _entries.pop(next(iter(_entries)), None)
+    result_sets.put(slug, payload, ttl)
     return ttl
 
 
 def get(slug: str) -> Optional[tuple[dict, int, int]]:
     """Return (payload, age_seconds, expires_in_seconds) for a live entry, else None."""
-    with _lock:
-        entry = _entries.get(slug)
-        if not entry:
-            return None
-        age = time.monotonic() - entry["ts"]
-        ttl = entry.get("ttl", config.RESULTS_TTL_SHORT)
-        if age >= ttl:
-            _entries.pop(slug, None)                # expired — free the memory
-            return None
-        return entry["payload"], int(age), max(0, int(ttl - age))
+    entry = result_sets.get(slug)
+    if entry is None:
+        return None
+    now = time.monotonic()
+    return entry.value, int(entry.age(now)), int(entry.expires_in(now))
 
 
 def with_current_rates(payload: dict, rates: dict[str, float]) -> dict:
@@ -84,22 +74,17 @@ def with_current_rates(payload: dict, rates: dict[str, float]) -> dict:
 def status() -> dict[str, dict]:
     """slug → its age, lifetime and time left, in seconds (for the admin view of /api/cache/status)."""
     now = time.monotonic()
-    with _lock:
-        entries = list(_entries.items())
     return {
-        slug: {
-            "age_seconds": round(now - v["ts"]),
-            "ttl_seconds": v.get("ttl", config.RESULTS_TTL_SHORT),
-            "expires_in":  max(0, round(v.get("ttl", config.RESULTS_TTL_SHORT) - (now - v["ts"]))),
-        }
-        for slug, v in entries
+        slug: {"age_seconds": round(entry.age(now)),
+               "ttl_seconds": entry.ttl,
+               "expires_in":  round(entry.expires_in(now))}
+        for slug, entry in result_sets.items()
     }
 
 
 def size() -> int:
-    return len(_entries)
+    return len(result_sets)
 
 
 def clear() -> None:
-    with _lock:
-        _entries.clear()
+    result_sets.clear()

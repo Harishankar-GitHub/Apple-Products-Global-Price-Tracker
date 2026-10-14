@@ -178,6 +178,8 @@ def run(product: str, client: str) -> Iterator[Step]:
 
     slots = fetch_slots
     if not (yield from _wait_for_slot(slots)):
+        log.warning("Turned away a search for %s: no fetch slot came free within %g s",
+                    slug, config.FETCH_SLOT_WAIT)
         yield Failed(503, busy_payload())
         return
 
@@ -260,13 +262,30 @@ def _fetch_in_background(product: str, slug: str, category: str, rates: dict[str
 async def _fetch_every_store(product: str, slug: str, category: str, rates: dict[str, float],
                              steps: "queue.Queue[Step]") -> int:
     """Puts a Row on `steps` for each store, caches the finished set and returns how long it is kept."""
+    started = time.monotonic()
     rows: list[dict] = []
+    problems: list[str] = []
     complete = True                         # False once any store's answer may change soon
     async for answer in prices.fetch_every_store(slug, category, rates):
         complete = complete and not answer.transient
         rows.append(answer.row)
+        if answer.problem:
+            problems.append(f"{answer.row['country']}: {answer.problem}")
         steps.put(Row(answer.row))
-    return results_cache.put(slug, results_cache.build_payload(product, slug, category, rates, rows), complete)
+    kept = results_cache.put(slug, results_cache.build_payload(product, slug, category, rates, rows), complete)
+    _log_fetch(slug, rows, sorted(problems), time.monotonic() - started, kept)
+    return kept
+
+
+def _log_fetch(slug: str, rows: list[dict], problems: list[str], seconds: float, kept: int) -> None:
+    """One line per fetch: how it went, and every store that had a problem and why."""
+    priced = sum(1 for r in rows if r.get("available"))
+    not_sold = sum(1 for r in rows if r.get("reason") == "Not available in this country")
+    level = logging.INFO if kept == config.RESULTS_TTL else logging.WARNING
+    log.log(level, "Fetched %s from %d stores in %.1f s: %d priced, %d not sold there, %d with a problem%s; "
+            "kept for %s", slug, len(rows), seconds, priced, not_sold, len(problems),
+            f" ({'; '.join(problems)})" if problems else "",
+            f"{kept / 3600:g} h" if kept >= 3600 else f"{kept / 60:g} min")
 
 
 def _hand_back(fetch: concurrent.futures.Future, slug: str, slot: threading.BoundedSemaphore,

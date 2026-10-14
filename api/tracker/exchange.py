@@ -1,60 +1,115 @@
 """
 Exchange rates: units of each currency per 1 US dollar, from open.er-api.com.
 
-They are kept for config.RATES_TTL (30 minutes). If the service cannot be
-reached, the last rates fetched are used; if there are none, prices are sent
-as listed, without a dollar figure.
+They are kept for config.RATES_TTL (30 minutes). After that, the next search
+still uses the rates held, so it does not wait for the exchange-rate service,
+and starts one download in the background; the searches after it get the new
+rates. Only when no rates are held at all (the first search after the server
+starts) does a search wait for them.
+
+If the service cannot be reached, the last rates fetched are used; if there
+are none, prices are sent as listed, without a dollar figure.
 """
+import concurrent.futures
+import logging
 import math
+import threading
 import time
-from typing import Optional
+from typing import NamedTuple, Optional
 
 import aiohttp
 
 from . import config, web
 from .countries import COUNTRIES
 
-# Swapped in as a whole new dict, so readers on other threads need no lock.
-_rates: dict[str, float] = {}
-_fetched_at: float = 0.0
+log = logging.getLogger(__name__)
 
 
-async def _download() -> dict[str, float]:
-    """Fetch the rates (only when the ones held are stale). Runs on the shared event loop."""
-    global _rates, _fetched_at
+class _Held(NamedTuple):
+    rates: dict[str, float]
+    fetched_at: float               # time.monotonic() when they arrived
+
+
+# Swapped in as a whole, so readers on other threads need no lock.
+_held = _Held({}, 0.0)
+_lock = threading.Lock()            # for starting a download, and for storing what it brings
+_download: Optional[concurrent.futures.Future] = None   # the download running, if any
+_generation = 0                     # moves on with clear(), so a download started before it is not stored
+
+
+async def _fetch(generation: int) -> dict[str, float]:
+    """Download the rates and hold them. Runs on the shared event loop; returns the rates held after it."""
+    global _held
+    problem = None
     try:
         async with web.session().get(config.EXCHANGE_API,
                                      timeout=aiohttp.ClientTimeout(total=config.RATES_TIMEOUT)) as r:
             if r.status == 200:
-                data = await r.json(content_type=None)
-                _rates = data.get("rates", {})
-                _fetched_at = time.monotonic()
-    except Exception:
-        pass  # fall through — returns stale or empty below
-    return _rates or {}
+                rates = (await r.json(content_type=None)).get("rates")
+                if isinstance(rates, dict) and rates:
+                    with _lock:
+                        if generation == _generation:
+                            _held = _Held(rates, time.monotonic())
+                    log.info("Exchange rates updated: %d currencies", len(rates))
+                else:
+                    problem = "the answer had no rates in it"
+            else:
+                problem = f"HTTP {r.status}"
+    except Exception as exc:
+        problem = web.describe(exc)
+    if problem:                                     # keep the rates held, if any
+        held = _held
+        log.warning("Exchange rates not updated (%s); %s", problem,
+                    f"still using the ones from {round((time.monotonic() - held.fetched_at) / 60)} min ago"
+                    if held.rates else "there are none, so prices are sent without a dollar figure")
+    return _held.rates
+
+
+def refresh() -> concurrent.futures.Future:
+    """
+    Start downloading the rates, unless a download is already running, and
+    return it. Its result is the rates held once it is over (the old ones if it
+    failed, {} if there are none).
+    """
+    global _download
+    with _lock:
+        if _download is None or _download.done():
+            _download = web.submit(_fetch(_generation))
+        return _download
 
 
 def get_rates() -> dict[str, float]:
-    """The current rates: the ones held while they are fresh, otherwise fetched again."""
-    if _rates and (time.monotonic() - _fetched_at) < config.RATES_TTL:
-        return _rates
-    return web.run(_download())
+    """
+    The current rates. Rates held for longer than config.RATES_TTL are still
+    returned, while new ones are fetched in the background; with no rates held
+    at all, this waits for the download.
+    """
+    held = _held
+    if held.rates and time.monotonic() - held.fetched_at < config.RATES_TTL:
+        return held.rates
+    download = refresh()
+    if held.rates:
+        return held.rates           # a little old: the searches after this one get the new rates
+    return download.result()
 
 
 def clear() -> None:
-    """Forget the rates held, so the next search fetches them again."""
-    global _rates, _fetched_at
-    _rates, _fetched_at = {}, 0.0
+    """Forget the rates held, so the next search fetches them again (and waits for them)."""
+    global _held, _download, _generation
+    with _lock:
+        _generation += 1
+        _held = _Held({}, 0.0)
+        _download = None
 
 
 def status() -> dict:
     """For /api/cache/status."""
-    now = time.monotonic()
+    held, now = _held, time.monotonic()
     return {
-        "cached":      bool(_rates),
-        "age_seconds": round(now - _fetched_at) if _rates else None,
+        "cached":      bool(held.rates),
+        "age_seconds": round(now - held.fetched_at) if held.rates else None,
         "ttl_seconds": config.RATES_TTL,
-        "expires_in":  max(0, round(config.RATES_TTL - (now - _fetched_at))) if _rates else None,
+        "expires_in":  max(0, round(config.RATES_TTL - (now - held.fetched_at))) if held.rates else None,
     }
 
 

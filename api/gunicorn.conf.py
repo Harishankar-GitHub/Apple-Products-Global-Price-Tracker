@@ -39,3 +39,6 @@ timeout = 120
 graceful_timeout = 30
 
 keepalive = 5
+
+# No access log (gunicorn's default): it would write every visitor's address.
+# The API logs what it does itself, without them (see LOG_LEVEL in tracker/config.py).

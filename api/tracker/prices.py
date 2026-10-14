@@ -6,8 +6,10 @@ connections in web.py (no thread pool). Each store needs one page download
 when its buy page has the price, two otherwise.
 """
 import asyncio
+import json
+import math
 import re
-from typing import AsyncIterator, NamedTuple, Optional
+from typing import AsyncIterator, Iterator, NamedTuple, Optional
 from urllib.parse import urlparse
 
 import aiohttp
@@ -21,30 +23,38 @@ from .exchange import usd_rate
 # Reading prices (pure, no I/O)
 # ---------------------------------------------------------------------------
 
+# Lowest plausible price per product family, in US DOLLARS: the first entry
+# whose name is part of the slug applies, so a more specific name comes before
+# a more general one ("ipad-pro" before "ipad"). A number below it on a product
+# page is something else (a monthly instalment, an accessory, a trade-in value).
+PRICE_FLOORS_USD: tuple[tuple[str, float], ...] = (
+    ("mac-pro",           5000),
+    ("mac-studio",        1500),
+    ("imac",              1000),
+    ("macbook",            800),
+    ("mac-mini",           400),
+    ("iphone",             500),
+    ("ipad-pro",           800),
+    ("ipad",               250),
+    ("apple-watch-ultra",  700),
+    ("apple-watch",        200),
+    ("airpods-max",        300),
+    ("airpods",            100),
+    ("apple-tv",           100),
+    ("homepod",             80),
+    ("airtag",              20),
+)
+OTHER_PRODUCTS_FLOOR_USD = 50
+
+
 def get_min_price(slug: str) -> float:
     """
-    Lowest plausible price for a product family, in US DOLLARS. A number below
-    it on a product page is something else (a monthly instalment, an accessory,
-    a trade-in value). Compare prices against local_min_price(), which converts
-    this into the store's currency — never against this figure directly.
+    The price floor for a product, in US DOLLARS (see PRICE_FLOORS_USD).
+    Compare prices against local_min_price(), which converts this into the
+    store's currency — never against this figure directly.
     """
     s = slug.lower()
-    if "mac-pro"           in s: return 5000
-    if "mac-studio"        in s: return 1500
-    if "imac"              in s: return 1000
-    if "macbook"           in s: return 800
-    if "mac-mini"          in s: return 400
-    if "iphone"            in s: return 500
-    if "ipad-pro"          in s: return 800
-    if "ipad"              in s: return 250
-    if "apple-watch-ultra" in s: return 700
-    if "apple-watch"       in s: return 200
-    if "airpods-max"       in s: return 300
-    if "airpods"           in s: return 100
-    if "apple-tv"          in s: return 100
-    if "homepod"           in s: return 80
-    if "airtag"            in s: return 20
-    return 50
+    return next((floor for family, floor in PRICE_FLOORS_USD if family in s), OTHER_PRODUCTS_FLOOR_USD)
 
 
 def local_min_price(slug: str, currency: str, rates: dict[str, float]) -> float:
@@ -67,14 +77,65 @@ def local_min_price(slug: str, currency: str, rates: dict[str, float]) -> float:
     return floor_usd * rate * config.PRICE_FLOOR_SLACK
 
 
+# The product's structured data (schema.org JSON-LD), which carries its price.
+_JSON_LD = re.compile(r'<script\b[^>]*\btype\s*=\s*["\']application/ld\+json["\'][^>]*>(.*?)</script\s*>',
+                      re.IGNORECASE | re.DOTALL)
+# Anywhere in the page, in this order: a "lowPrice", then an "amount" (which is
+# also what Apple calls a monthly instalment, hence the floor). Quoted or not.
+_IN_THE_PAGE = (re.compile(r'"lowPrice"\s*:\s*"?([\d.]+)'), re.compile(r'"amount"\s*:\s*"?([\d.]+)'))
+
+
+def _number(value) -> Optional[float]:
+    """A price as a positive number: 999, 999.0 or "999.00"; None for anything else."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    if isinstance(value, str) and not re.fullmatch(r"\d+(\.\d*)?", value.strip()):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) and number > 0 else None
+
+
+def _offer_prices(node) -> Iterator[float]:
+    """Every offer's lowPrice (or else its price) in a JSON-LD document, in order."""
+    if isinstance(node, dict):
+        for key in ("lowPrice", "price"):
+            if key in node:
+                if (number := _number(node[key])) is not None:
+                    yield number
+                break
+        for value in node.values():
+            yield from _offer_prices(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from _offer_prices(item)
+
+
+def _structured_prices(html: str) -> Iterator[float]:
+    for block in _JSON_LD.findall(html):
+        try:
+            document = json.loads(block)
+        except ValueError:
+            continue                    # not valid JSON: the search of the whole page below may still find it
+        yield from _offer_prices(document)
+
+
+def _prices_in_the_page(html: str, pattern: re.Pattern) -> Iterator[float]:
+    for match in pattern.finditer(html):
+        if (number := _number(match.group(1))) is not None:
+            yield number
+
+
 def extract_low_price(html: str, min_price: float) -> Optional[float]:
-    """First price on the page that is at least `min_price` (in the page's own currency)."""
-    for pattern in (r'"lowPrice"\s*:\s*([\d.]+)', r'"amount"\s*:\s*([\d.]+)'):
-        m = re.search(pattern, html)
-        if m:
-            val = float(m.group(1))
-            if val >= min_price:
-                return val
+    """
+    The product's price on a page (in the page's own currency): the first
+    price of at least `min_price` in the page's structured data, or else the
+    first "lowPrice", or else the first "amount", of at least `min_price`
+    anywhere in the page. None if there is none.
+    """
+    for found in (_structured_prices(html), *(_prices_in_the_page(html, p) for p in _IN_THE_PAGE)):
+        for price in found:
+            if price >= min_price:
+                return price
     return None
 
 
@@ -96,6 +157,8 @@ class StoreRow(NamedTuple):
     row: dict           # what is sent to the page and cached
     transient: bool     # True: this answer may change soon (Apple failed to answer, or no exchange
                         # rate), so the result set is kept for minutes rather than hours
+    problem: Optional[str] = None   # for the log: what went wrong ("timeout", "HTTP 503", "no price
+                                    # on the page", ...); None for a price, or a product not sold there
 
 
 async def _fetch_store(
@@ -120,9 +183,9 @@ async def _fetch_store(
     flag      = COUNTRY_FLAGS.get(country, "🏳")
     timeout   = aiohttp.ClientTimeout(total=config.PAGE_TIMEOUT)
 
-    async def _fetch(url: str) -> tuple[Optional[float], str]:
+    async def _fetch(url: str) -> tuple[Optional[float], str, str]:
         """
-        Download one page once and return (price, outcome). Outcome is:
+        Download one page once and return (price, outcome, what happened). Outcome is:
           "ok"      — a page for this product (the price may still be None)
           "missing" — 404, or redirected to a different page: Apple sends
                       products a country does not sell to the line-up page,
@@ -134,28 +197,32 @@ async def _fetch_store(
             async with connections, session.get(url, timeout=timeout, allow_redirects=True) as r:
                 if r.status == 200:
                     if slug not in urlparse(str(r.url)).path:
-                        return None, "missing"
+                        return None, "missing", "redirected away"
                     html = await r.text()
-                    return extract_low_price(html, min_price), "ok"
-                return None, ("missing" if r.status == 404 else "error")
-        except Exception:
-            return None, "error"
+                    return extract_low_price(html, min_price), "ok", "no price on the page"
+                return None, ("missing" if r.status == 404 else "error"), f"HTTP {r.status}"
+        except Exception as exc:
+            return None, "error", web.describe(exc)
 
     # The buy page normally carries the price, so it is fetched first and the
     # (much larger) product page only if the buy page had none. Each page is
     # downloaded at most once: what the product page answered also tells a
     # product this country does not sell from one whose price could not be read.
-    price_val, shop_outcome = await _fetch(shop_url)
+    price_val, shop_outcome, shop_said = await _fetch(shop_url)
     if price_val is None:
-        price_val, prod_outcome = await _fetch(prod_url)
+        price_val, prod_outcome, prod_said = await _fetch(prod_url)
 
     if price_val is None:
         if prod_outcome == "missing":
             return StoreRow({"country": country, "flag": flag, "available": False,
                              "reason": "Not available in this country", "url": prod_url}, transient=False)
+        problem = (shop_said if shop_said == prod_said
+                   else f"buy page: {shop_said}, product page: {prod_said}")
+        if no_rate:
+            problem += f"; no usable exchange rate for {currency}"
         return StoreRow({"country": country, "flag": flag, "available": False,
                          "reason": "Price not found", "url": prod_url},
-                        transient="error" in (shop_outcome, prod_outcome) or no_rate)
+                        transient="error" in (shop_outcome, prod_outcome) or no_rate, problem=problem)
 
     rate      = usd_rate(rates, currency)
     usd_price = (round(price_val / rate, 2) or None) if rate else None   # never 0.00
@@ -173,7 +240,8 @@ async def _fetch_store(
         "usdPrice":            usd_price,     # null: no exchange rate, so not ranked
         "url":                 prod_url,
     }
-    return StoreRow(row, transient=usd_price is None)          # see no_rate above
+    return StoreRow(row, transient=usd_price is None,          # see no_rate above
+                    problem=None if usd_price else f"no usable exchange rate for {currency}")
 
 
 async def fetch_every_store(slug: str, category: str, rates: dict[str, float]) -> AsyncIterator[StoreRow]:

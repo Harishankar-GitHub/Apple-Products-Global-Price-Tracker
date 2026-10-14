@@ -114,4 +114,4 @@ class Api:
 
 def cached_ttl(slug: str) -> int:
     """How long the results cache keeps `slug` (seconds)."""
-    return results_cache._entries[slug]["ttl"]
+    return results_cache.result_sets.get(slug).ttl

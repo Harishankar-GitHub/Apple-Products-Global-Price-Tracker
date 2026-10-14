@@ -45,7 +45,7 @@ def test_each_fetch_keeps_its_own_connection_limit(server, apple, monkeypatch):
     for s in searches:
         s.join(30)
     assert apple.peak_connections == 20
-    assert {"prod6", "prod7"} <= set(results_cache._entries)
+    assert {"prod6", "prod7"} <= set(results_cache.result_sets.keys())
 
 
 def test_waiting_on_the_loop_from_the_loop_is_refused():

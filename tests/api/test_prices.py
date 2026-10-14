@@ -31,6 +31,12 @@ def test_floor_in_dollars(slug, floor):
     assert prices.get_min_price(slug) == floor
 
 
+def test_every_family_in_the_floor_table_can_be_reached():
+    """A family listed after a more general one that matches it would never be used."""
+    for family, floor in prices.PRICE_FLOORS_USD:
+        assert prices.get_min_price(family) == floor, family
+
+
 @pytest.mark.parametrize(
     ("slug", "currency", "floor"),
     [
@@ -94,6 +100,48 @@ def test_monthly_instalment_is_not_taken_as_the_price(slug, currency, monthly):
 )
 def test_page_with_an_instalment_and_the_real_price(html):
     assert accepted(html, "iphone-17", "INR") == 82_900
+
+
+def ld_json(document) -> str:
+    return f'<script type="application/ld+json">{json.dumps(document)}</script>'
+
+
+@pytest.mark.parametrize(
+    ("html", "price"),
+    [
+        (ld_json({"@type": "Product", "offers": {"@type": "AggregateOffer", "lowPrice": "999.00",
+                                                 "highPrice": "1499.00"}}), 999),
+        (ld_json({"@type": "Product", "offers": [{"@type": "Offer", "price": 1299, "priceCurrency": "USD"}]}), 1299),
+        (ld_json({"@graph": [{"@type": "BreadcrumbList"}, {"@type": "Product", "offers": {"price": "1099"}}]}), 1099),
+        (ld_json({"offers": [{"price": 83.25}, {"price": 999.0}]}), 999),            # an instalment listed first
+        (ld_json({"offers": {"price": 1299, "lowPrice": 999}}), 999),                # lowPrice before price
+        ('<script>{"lowPrice": 1599}</script>' + ld_json({"offers": {"lowPrice": 999}}), 999),   # structured data first
+        ("<SCRIPT TYPE='application/ld+json'>{\"offers\": {\"price\": 999}}</SCRIPT>", 999),
+        ('<script type="application/ld+json">{"lowPrice": 999,}</script>', 999),      # not valid JSON: found in the page
+        (ld_json({"offers": {"price": True}}) + '<script>{"lowPrice": "999.00"}</script>', 999),   # quoted
+        (instalment(83.25) + '<script>{"amount": 999.00}</script>', 999),            # a later "amount"
+        ('<script>{"lowPrice": 83.25, "x": {"lowPrice": 999}}</script>', 999),       # a later "lowPrice"
+        ('<script>{"amount": 1299.00, "lowPrice": 999}</script>', 999),              # "lowPrice" before "amount"
+    ],
+    ids=["aggregate-offer-quoted", "offer-price", "graph", "instalment-offer-first", "low-price-before-price",
+         "structured-data-before-the-page", "upper-case-tag", "invalid-json", "quoted-in-the-page",
+         "second-amount", "second-low-price", "low-price-before-amount"],
+)
+def test_reading_the_price(html, price):
+    assert accepted(html, "macbook-air", "USD") == price
+
+
+@pytest.mark.parametrize(
+    "html",
+    ['<script>{"lowPrice": 1.2.3, "amount": "..."}</script>', ld_json({"offers": {"price": "999 USD"}}),
+     ld_json({"offers": {"price": None, "lowPrice": [999]}}), ld_json({"offers": {"price": True}}),
+     ld_json({"offers": [{"price": -999}, {"price": 0}]}), ld_json({"offers": {"price": "NaN"}}),
+     "<html>no price here</html>", ""],
+    ids=["broken-numbers", "number-with-text", "wrong-types", "true", "negative-or-zero", "not-a-number", "no-price",
+         "empty"],
+)
+def test_no_price_is_read_from_nonsense(html):
+    assert prices.extract_low_price(html, 0) is None                  # not even with no floor at all
 
 
 US_PRICES = {"mac-pro": 6999, "mac-studio": 1999, "imac": 1299, "macbook-air": 999, "mac-mini": 599, "iphone-17": 799,

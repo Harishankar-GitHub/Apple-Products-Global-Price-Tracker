@@ -1,8 +1,6 @@
 """The results cache: how long a result set is kept, what is shared between names and endpoints, and its size."""
 import json
 
-import time
-
 import pytest
 
 from support.client import cached_ttl
@@ -33,7 +31,7 @@ def test_complete_result_is_kept_six_hours(server, apple, clock):
     clock.advance(2 * MINUTE)                                          # 6 h 01 min
     again = server.search("MacBook Air")
     assert not again.cached and len(apple.apple_calls()) > calls and again.meta["expiresInSeconds"] == SIX_HOURS
-    assert list(results_cache._entries) == ["macbook-air"]                # replaced, not duplicated
+    assert results_cache.result_sets.keys() == ["macbook-air"]           # replaced, not duplicated
 
 
 def test_spellings_of_one_product_share_its_entry(server, apple, clock):
@@ -83,7 +81,7 @@ def test_result_without_any_price_is_kept_five_minutes(server, clock):
 
 def test_unknown_product_is_not_cached(server, via):
     result = server.search("Nonexistent Thing", via=via)
-    assert result.error and results_cache._entries == {}
+    assert result.error and results_cache.size() == 0
 
 
 def test_endpoints_share_the_cache(server, apple, clock):
@@ -116,27 +114,25 @@ def test_fresh_stream_is_not_marked_cached(server):
 
 def test_result_cache_drops_the_oldest(server, clock, monkeypatch):
     monkeypatch.setattr(config, "RESULTS_CACHE_MAX", 5)
-    for i in range(1, 9):
+    for i in range(1, 5):
         server.search(f"prod{i}")
-    assert list(results_cache._entries) == ["prod4", "prod5", "prod6", "prod7", "prod8"]
-    results_cache._entries["prod4"]["ts"] -= 7 * HOUR                     # expired: fetched again
-    server.search("prod4")
+    clock.advance(2 * HOUR)
+    for i in range(5, 9):
+        server.search(f"prod{i}")
+    assert results_cache.result_sets.keys() == ["prod4", "prod5", "prod6", "prod7", "prod8"]
+    clock.advance(4 * HOUR + MINUTE)                                   # prod4 is 6 h old: fetched again
+    assert not server.search("prod4").cached
     server.search("prod9")
-    assert list(results_cache._entries) == ["prod6", "prod7", "prod8", "prod4", "prod9"]   # refreshed counts as newest
+    assert results_cache.result_sets.keys() == ["prod6", "prod7", "prod8", "prod4", "prod9"]   # refreshed counts as newest
 
 
 def test_name_cache_drops_the_oldest(server):
     for i in range(config.SLUG_CACHE_MAX + 20):
         server.get(f"zz{i}")
-    assert len(lookup._entries) == config.SLUG_CACHE_MAX
-    assert "zz19" not in lookup._entries and "zz20" in lookup._entries and f"zz{config.SLUG_CACHE_MAX + 19}" in lookup._entries
+    names = lookup.names()
+    assert len(names) == config.SLUG_CACHE_MAX
+    assert names[0] == "zz20" and names[-1] == f"zz{config.SLUG_CACHE_MAX + 19}"
 
-
-def test_entry_without_a_stored_lifetime_is_short_lived(clock):
-    results_cache._entries["legacy"] = {"ts": time.monotonic(), "payload": {"results": []}}
-    assert results_cache.get("legacy") is not None
-    clock.advance(6 * MINUTE)
-    assert results_cache.get("legacy") is None and "legacy" not in results_cache._entries
 
 
 def test_status_reports_each_entry(server, apple, clock, monkeypatch):
