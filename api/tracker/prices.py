@@ -1,9 +1,9 @@
 """
 Prices: reading a price off a store's page, and fetching every store at once.
 
-All 50 country requests fire simultaneously in one session on one event loop
-(no thread pool). Each store needs one page download when its buy page has
-the price, two otherwise.
+All 50 country requests fire simultaneously, on the shared event loop and
+connections in web.py (no thread pool). Each store needs one page download
+when its buy page has the price, two otherwise.
 """
 import asyncio
 import re
@@ -100,6 +100,7 @@ class StoreRow(NamedTuple):
 
 async def _fetch_store(
     session: aiohttp.ClientSession,
+    connections: asyncio.Semaphore,
     country: str,
     prefix: str,
     currency: str,
@@ -130,7 +131,7 @@ async def _fetch_store(
                       server error — anything that may not last
         """
         try:
-            async with session.get(url, timeout=timeout, allow_redirects=True) as r:
+            async with connections, session.get(url, timeout=timeout, allow_redirects=True) as r:
                 if r.status == 200:
                     if slug not in urlparse(str(r.url)).path:
                         return None, "missing"
@@ -176,11 +177,22 @@ async def _fetch_store(
 
 
 async def fetch_every_store(slug: str, category: str, rates: dict[str, float]) -> AsyncIterator[StoreRow]:
-    """Every store's answer, in the order they arrive. All 50 stores are asked at once."""
-    async with web.apple_session() as session:
-        tasks = [
-            asyncio.ensure_future(_fetch_store(session, country, prefix, currency, symbol, slug, category, rates))
-            for country, (prefix, currency, symbol) in COUNTRIES.items()
-        ]
+    """
+    Every store's answer, in the order they arrive. All 50 stores are asked at
+    once over the shared connections (see web.py), with at most
+    config.APPLE_MAX_CONNECTIONS of this fetch's requests in flight at a time.
+    Run it on the shared event loop.
+    """
+    session = web.session()
+    connections = asyncio.Semaphore(config.APPLE_MAX_CONNECTIONS)
+    tasks = [
+        asyncio.ensure_future(_fetch_store(session, connections, country, prefix, currency, symbol,
+                                           slug, category, rates))
+        for country, (prefix, currency, symbol) in COUNTRIES.items()
+    ]
+    try:
         for next_done in asyncio.as_completed(tasks):   # the fastest stores first
             yield await next_done
+    finally:
+        for task in tasks:              # if the fetch broke off part-way, stop asking the other stores
+            task.cancel()

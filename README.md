@@ -18,7 +18,7 @@ Backend API (Render): https://apple-products-global-price-tracker.onrender.com
 
 1. You type a product name (e.g. "MacBook Air", "iPhone 17", "Mac mini")
 2. The API resolves the correct apple.com slug — checking a known-good override table first, then probing apple.com live if needed
-3. All 50 country requests fire **simultaneously** via `aiohttp` (async, single thread — no worker pool)
+3. All 50 country requests fire **simultaneously** via `aiohttp`, on one event loop and connection pool that every search shares (no worker pool)
 4. Each country result is pushed to the browser via **Server-Sent Events (SSE)** the moment it arrives — the table updates live
 5. Prices are extracted from Apple's embedded JSON-LD `"lowPrice"` field — no JavaScript execution needed
 6. Prices are converted to USD using live exchange rates from [open.er-api.com](https://open.er-api.com)
@@ -60,7 +60,7 @@ apple-global-price-tracker/
 │   │   ├── prices.py       #   Reading a price off a page; fetching all 50 stores at once
 │   │   ├── results_cache.py #  Finished result sets per product
 │   │   ├── exchange.py     #   Exchange rates, kept for 30 minutes
-│   │   ├── web.py          #   Connections to apple.com
+│   │   ├── web.py          #   One event loop and connection pool for apple.com
 │   │   ├── countries.py    #   The 50 stores: URL prefix, currency, flag
 │   │   └── config.py       #   Every setting, including the environment variables
 │   ├── gunicorn.conf.py    # Server settings: threads and timeouts
@@ -312,7 +312,7 @@ Nothing has to be configured: the limits above are on by default and `/api/cache
 | `RATE_LIMIT_REQUESTS_PER_MIN` | Requests per visitor per minute | `60` |
 | `RATE_LIMIT_FETCHES_PER_10MIN` | Apple look-ups per visitor per 10 minutes | `20` |
 | `RATE_LIMIT_GLOBAL_FETCHES_PER_10MIN` | Apple look-ups for all visitors together per 10 minutes | `60` |
-| `APPLE_MAX_CONNECTIONS` | Connections open to apple.com at once, i.e. how many stores are fetched in parallel | `50` |
+| `APPLE_MAX_CONNECTIONS` | Requests one search has open to apple.com at once, i.e. how many stores it fetches in parallel | `50` |
 | `MAX_PARALLEL_FETCHES` | Searches that fetch from apple.com at the same time; others wait for a free slot (minimum 1) | `2` |
 | `WEB_THREADS` | Requests the server handles at the same time (minimum 1) | `16` |
 
@@ -395,7 +395,7 @@ The API runs as one gunicorn process with a pool of threads, set in `api/gunicor
 - **Visitors are served side by side.** Each request gets its own thread (16 by default, `WEB_THREADS`), so a search in progress does not hold anyone else up: cached results, health checks and other searches are answered meanwhile. Gunicorn's default worker, used before, served one request at a time.
 - **Slow searches are not cut off.** With threads, gunicorn's `timeout` (120 s) only checks that the process is still alive; it does not limit how long a request may take. Before, a search still streaming after 30 s was cut off mid-way.
 - **One process, on purpose.** The caches and rate-limit counters live in the process's memory, and a second process would have its own separate copies.
-- **Two searches fetch from Apple at a time** (`MAX_PARALLEL_FETCHES`). Each one opens up to 50 connections to apple.com and holds those pages in memory, so on a small instance a burst of new searches is let through a couple at a time. A further search waits for a free slot while the page shows "Busy with other searches — yours starts in a moment…". If none comes free within 45 s, it gets a "busy, please try again" message (`/api/prices` answers `503` with `temporary: true` and a `Retry-After` header). When a waiting search gets its slot it checks the cache again, so if it was waiting behind a search for the same product it gets those results instead of fetching them again. Cached results never wait for a slot.
+- **Two searches fetch from Apple at a time** (`MAX_PARALLEL_FETCHES`). Each one has up to 50 requests open to apple.com and holds those pages in memory, so on a small instance a burst of new searches is let through a couple at a time. A further search waits for a free slot while the page shows "Busy with other searches — yours starts in a moment…". If none comes free within 45 s, it gets a "busy, please try again" message (`/api/prices` answers `503` with `temporary: true` and a `Retry-After` header). When a waiting search gets its slot it checks the cache again, so if it was waiting behind a search for the same product it gets those results instead of fetching them again. Cached results never wait for a slot.
 - **Closing the page does not waste a fetch.** A search that has started fetching finishes and stores its results in the cache, ready for the next visitor. A search still waiting for a slot gives up as soon as the visitor leaves.
 
 ---
@@ -440,7 +440,9 @@ This `lowPrice` is the **base model starting price** — present in static HTML 
 
 ### Requests per search
 
-Every request goes to one host, `www.apple.com`, so the number of connections allowed to that host decides how many stores are really fetched at once. It is 50 — one per store (`APPLE_MAX_CONNECTIONS`). If Apple starts refusing requests, lower it with the environment variable of the same name; 10 is the old value.
+A search has at most 50 requests open to `www.apple.com` at once — one per store (`APPLE_MAX_CONNECTIONS`). If Apple starts refusing requests, lower it with the environment variable of the same name; 10 is the old value.
+
+**One connection pool.** All requests to apple.com and to the exchange-rate service run on one event loop in a background thread and share one `aiohttp` session (`api/tracker/web.py`). Connections, with their TLS sessions and DNS answers, are reused from a product look-up to the fetch that follows it and from one search to the next. Against a local HTTPS stand-in for apple.com, three searches in a row opened about 52 new connections each before this change; now the first opens 51 and the next two open none. Fetches run as tasks on that loop, so a search no longer starts a thread of its own.
 
 Per store, the buy page is fetched first because it normally has the price. The larger product page (`apple.com/<cc>/<slug>/`) is fetched only if the buy page had no price, and no page is downloaded twice: what the product page answered (found, 404, redirected elsewhere, or failed) also decides between "Not available in this country" and "Price not found". That is one download for a store whose buy page has the price and two otherwise — about 70 for a typical product, 100 at most.
 
@@ -473,7 +475,7 @@ Comparing the dollar figure directly, as before, went wrong in both directions: 
 | Backend | Python 3.11 · Flask · aiohttp |
 | Async | `asyncio` + `aiohttp` — all 50 country requests fire simultaneously |
 | Streaming | Server-Sent Events (SSE) via Flask `stream_with_context` |
-| Bridge | `queue.Queue` + background thread bridges async → sync; both price endpoints read the same search (`api/tracker/search.py`) |
+| Bridge | One `asyncio` event loop in a background thread, with one shared `aiohttp` session (`api/tracker/web.py`); request threads hand it work and read the rows through a `queue.Queue`. Both price endpoints run the same search (`api/tracker/search.py`) |
 | Hosting | GitHub Pages (frontend) · Render free tier (backend) |
 | Exchange rates | [open.er-api.com](https://open.er-api.com) |
 

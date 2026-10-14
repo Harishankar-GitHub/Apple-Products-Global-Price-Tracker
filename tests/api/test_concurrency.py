@@ -2,6 +2,7 @@
 Serving visitors side by side: fetch slots, waiting, the busy reply, closed pages,
 fetches that break off, and the caches under many threads.
 """
+import asyncio
 import sys
 import threading
 import time
@@ -11,8 +12,9 @@ import pytest
 from werkzeug.test import EnvironBuilder
 
 from app import app as flask_app
+from fakes.apple import store_prefix
 from support.client import Event, cached_ttl, parse_sse
-from tracker import config, exchange, lookup, results_cache, search, web
+from tracker import config, exchange, lookup, prices, results_cache, search, web
 
 
 class Connection:
@@ -77,6 +79,13 @@ def free_slots() -> int:
     return search.fetch_slots._value
 
 
+def tasks_on_the_loop() -> int:
+    """Coroutines running on the shared event loop, not counting the one asking."""
+    async def count():
+        return len(asyncio.all_tasks()) - 1
+    return web.run(count())
+
+
 def wait_until(condition, timeout: float = 10) -> bool:
     end = time.monotonic() + timeout
     while time.monotonic() < end:
@@ -120,18 +129,16 @@ def test_searches_run_side_by_side_two_fetches_at_a_time(server, apple, monkeypa
         expected[name] = sorted(server.search(name).rows, key=lambda r: r["country"])
     results_cache.clear()
 
-    running, peak, lock = [0], [0], threading.Lock()
+    running, peak = [0], [0]
     real_fetch = search._fetch_every_store
 
-    def counted(*args, **kwargs):
-        with lock:
-            running[0] += 1
-            peak[0] = max(peak[0], running[0])
+    async def counted(*args, **kwargs):          # fetches all run on the one event loop: no lock needed
+        running[0] += 1
+        peak[0] = max(peak[0], running[0])
         try:
-            return real_fetch(*args, **kwargs)
+            return await real_fetch(*args, **kwargs)
         finally:
-            with lock:
-                running[0] -= 1
+            running[0] -= 1
 
     monkeypatch.setattr(search, "_fetch_every_store", counted)
     apple.delay = lambda url: 0.1
@@ -272,23 +279,31 @@ def test_closed_page_stops_waiting_without_taking_a_slot(apple):
     assert len(apple.calls) == calls and "prod11" not in results_cache._entries
 
 
-def test_fetch_that_breaks_off_ends_with_try_again(server, monkeypatch, via):
+def test_fetch_that_breaks_off_ends_with_try_again(server, apple, monkeypatch, caplog, via):
     known("prod12")
+    apple.delay = lambda url: 3 if store_prefix(url) == "uk" else 0     # one store is still loading…
+    real_fetch_store = prices._fetch_store
 
-    def broken():
-        raise RuntimeError("simulated failure inside the fetch")
+    async def breaks_in_japan(session, connections, country, *args):
+        if country == "Japan":                                          # …when another one fails
+            await asyncio.sleep(0.1)
+            raise RuntimeError("simulated failure inside the fetch")
+        return await real_fetch_store(session, connections, country, *args)
 
-    monkeypatch.setattr(web, "make_connector", broken)
-    monkeypatch.setattr(threading, "excepthook", lambda args: None)     # the thread's traceback is expected
+    monkeypatch.setattr(prices, "_fetch_store", breaks_in_japan)
     if via == "stream":
         events = server.stream("prod12")
-        assert [e.name for e in events] == ["searching", "meta", "error"]
+        names = [e.name for e in events]
+        assert names[:2] == ["searching", "meta"] and names[-1] == "error" and "done" not in names
+        assert 0 < names.count("result") < 50                           # the rows that came in first
         assert events[-1].data == search.fetch_failed_payload()
     else:
         resp = server.get("prod12")
         assert resp.status_code == 503 and resp.headers["Retry-After"] == "10"
         assert resp.get_json() == search.fetch_failed_payload()
     assert "prod12" not in results_cache._entries and free_slots() == 2
+    assert "broke off" in caplog.text and "simulated failure" in caplog.text    # logged with its traceback
+    assert wait_until(lambda: tasks_on_the_loop() == 0, timeout=1)       # the store still loading was stopped
 
 
 def test_failure_before_the_fetch_starts_gives_the_slot_back(server, monkeypatch, via):

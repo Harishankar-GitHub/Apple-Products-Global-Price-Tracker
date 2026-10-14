@@ -2,8 +2,8 @@
 Product name → the page Apple has for it: its slug ("macbook-air") and
 category ("mac", used in buy-page URLs).
 
-All apple.com checks for one name run at once in one session. Answers are
-cached by the name as typed. How long an answer is kept depends on how sure
+All apple.com checks for one name run at once, over the connections the
+whole API shares (see web.py). Answers are cached by the name as typed. How long an answer is kept depends on how sure
 it is, so that one Apple timeout cannot make a product "not found" (or pin it
 to the wrong page) until the server restarts:
 
@@ -172,75 +172,77 @@ async def _override_is_live(session: aiohttp.ClientSession, slug: str, category:
 
 async def _async_resolve_slug(product_name: str) -> tuple[Optional[tuple[str, str]], bool]:
     """
-    All apple.com probing runs concurrently inside one aiohttp session.
-    Returns (result, unsure). `unsure` is True when a page check failed for a
-    temporary reason before the answer was reached, so the answer — a fallback
-    page, or "not found" — might be different once Apple responds again. An
-    exact match is never unsure. Failures of the suggestions service alone do
-    not count: it is only a hint, and the page checks decide.
+    All apple.com probing runs concurrently, on the shared event loop and
+    connections (see web.py). Returns (result, unsure). `unsure` is True when
+    a page check failed for a temporary reason before the answer was reached,
+    so the answer — a fallback page, or "not found" — might be different once
+    Apple responds again. An exact match is never unsure. Failures of the
+    suggestions service alone do not count: it is only a hint, and the page
+    checks decide.
     """
     override  = SLUG_OVERRIDES.get(product_name.strip().lower())
     candidate = name_to_slug(product_name)
     category  = infer_category(candidate)
     failures: list = []
 
-    async with web.apple_session() as session:
-        # 0. Known name: use its slug while Apple still serves it, else carry on below
-        if override and await _override_is_live(session, *override, failures):
-            return override, False
+    session = web.session()
 
-        # 1. Direct probe + suggestions API call in parallel
-        async def suggestions() -> Optional[tuple[str, str]]:
-            try:
-                params = {"q": product_name, "locale": "en_US", "client": "global-search"}
-                async with session.get(
-                    "https://www.apple.com/search-services/suggestions/",
-                    params=params,
-                    timeout=aiohttp.ClientTimeout(total=config.SUGGESTIONS_TIMEOUT),
-                ) as r:
-                    if r.status == 200:
-                        data = await r.json(content_type=None)
-                        for s in data.get("suggestions", []):
-                            url_hint = s.get("url", "")
-                            if "apple.com" in url_hint:
-                                path = url_hint.rstrip("/").split("apple.com/")[-1].strip("/")
-                                slug = path.split("/")[0]
-                                if slug and slug not in ("shop", "store", "search"):
-                                    if await _async_probe(session, f"https://www.apple.com/{slug}/", failures):
-                                        return (slug, infer_category(slug))
-            except Exception:
-                pass
-            return None
+    # 0. Known name: use its slug while Apple still serves it, else carry on below
+    if override and await _override_is_live(session, *override, failures):
+        return override, False
 
-        direct_ok, suggestion_result = await asyncio.gather(
-            _async_probe(session, f"https://www.apple.com/{candidate}/", failures),
-            suggestions(),
-        )
+    # 1. Direct probe + suggestions API call in parallel
+    async def suggestions() -> Optional[tuple[str, str]]:
+        try:
+            params = {"q": product_name, "locale": "en_US", "client": "global-search"}
+            async with session.get(
+                "https://www.apple.com/search-services/suggestions/",
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=config.SUGGESTIONS_TIMEOUT),
+            ) as r:
+                if r.status == 200:
+                    data = await r.json(content_type=None)
+                    for s in data.get("suggestions", []):
+                        url_hint = s.get("url", "")
+                        if "apple.com" in url_hint:
+                            path = url_hint.rstrip("/").split("apple.com/")[-1].strip("/")
+                            slug = path.split("/")[0]
+                            if slug and slug not in ("shop", "store", "search"):
+                                if await _async_probe(session, f"https://www.apple.com/{slug}/", failures):
+                                    return (slug, infer_category(slug))
+        except Exception:
+            pass
+        return None
 
-        if direct_ok:
-            return (candidate, category), False     # exact page exists: certain
-        if suggestion_result:
-            return suggestion_result, bool(failures)
+    direct_ok, suggestion_result = await asyncio.gather(
+        _async_probe(session, f"https://www.apple.com/{candidate}/", failures),
+        suggestions(),
+    )
 
-        # 2. Try common variations concurrently
-        words = candidate.split("-")
-        variations = list(dict.fromkeys(filter(None, [
-            "apple-" + candidate,
-            "-".join(words[:3]),
-            "-".join(words[:2]),
-            *[f"{candidate}-{s}"       for s in ("2", "3", "4", "10", "11")],
-            *[f"apple-{candidate}-{s}" for s in ("2", "3", "4", "10", "11")],
-        ])))
-        variations = [v for v in variations if v != candidate]
+    if direct_ok:
+        return (candidate, category), False     # exact page exists: certain
+    if suggestion_result:
+        return suggestion_result, bool(failures)
 
-        probe_tasks = [
-            _async_probe(session, f"https://www.apple.com/{v}/", failures)
-            for v in variations
-        ]
-        results = await asyncio.gather(*probe_tasks)
-        for var, ok in zip(variations, results):
-            if ok:
-                return (var, infer_category(var)), bool(failures)
+    # 2. Try common variations concurrently
+    words = candidate.split("-")
+    variations = list(dict.fromkeys(filter(None, [
+        "apple-" + candidate,
+        "-".join(words[:3]),
+        "-".join(words[:2]),
+        *[f"{candidate}-{s}"       for s in ("2", "3", "4", "10", "11")],
+        *[f"apple-{candidate}-{s}" for s in ("2", "3", "4", "10", "11")],
+    ])))
+    variations = [v for v in variations if v != candidate]
+
+    probe_tasks = [
+        _async_probe(session, f"https://www.apple.com/{v}/", failures)
+        for v in variations
+    ]
+    results = await asyncio.gather(*probe_tasks)
+    for var, ok in zip(variations, results):
+        if ok:
+            return (var, infer_category(var)), bool(failures)
 
     return None, bool(failures)
 
@@ -302,7 +304,7 @@ def discover_slug(product_name: str) -> SlugLookup:
     if entry is not None:
         return _as_lookup(entry)                    # cache hit
 
-    result, unsure = asyncio.run(_async_resolve_slug(product_name))
+    result, unsure = web.run(_async_resolve_slug(product_name))
     if result and not unsure:
         ttl = None                                  # certain: keep
     elif result:

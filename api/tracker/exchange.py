@@ -5,14 +5,13 @@ They are kept for config.RATES_TTL (30 minutes). If the service cannot be
 reached, the last rates fetched are used; if there are none, prices are sent
 as listed, without a dollar figure.
 """
-import asyncio
 import math
 import time
 from typing import Optional
 
 import aiohttp
 
-from . import config
+from . import config, web
 from .countries import COUNTRIES
 
 # Swapped in as a whole new dict, so readers on other threads need no lock.
@@ -21,18 +20,17 @@ _fetched_at: float = 0.0
 
 
 async def _download() -> dict[str, float]:
-    """Fetch the rates (only when the ones held are stale)."""
+    """Fetch the rates (only when the ones held are stale). Runs on the shared event loop."""
     global _rates, _fetched_at
-    async with aiohttp.ClientSession(headers=config.HEADERS) as session:
-        try:
-            async with session.get(config.EXCHANGE_API,
-                                   timeout=aiohttp.ClientTimeout(total=config.RATES_TIMEOUT)) as r:
-                if r.status == 200:
-                    data = await r.json(content_type=None)
-                    _rates = data.get("rates", {})
-                    _fetched_at = time.monotonic()
-        except Exception:
-            pass  # fall through — returns stale or empty below
+    try:
+        async with web.session().get(config.EXCHANGE_API,
+                                     timeout=aiohttp.ClientTimeout(total=config.RATES_TIMEOUT)) as r:
+            if r.status == 200:
+                data = await r.json(content_type=None)
+                _rates = data.get("rates", {})
+                _fetched_at = time.monotonic()
+    except Exception:
+        pass  # fall through — returns stale or empty below
     return _rates or {}
 
 
@@ -40,7 +38,7 @@ def get_rates() -> dict[str, float]:
     """The current rates: the ones held while they are fresh, otherwise fetched again."""
     if _rates and (time.monotonic() - _fetched_at) < config.RATES_TTL:
         return _rates
-    return asyncio.run(_download())
+    return web.run(_download())
 
 
 def clear() -> None:

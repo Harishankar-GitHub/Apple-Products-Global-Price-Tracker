@@ -14,8 +14,8 @@ the same order, with the same messages:
   6. limits 2 and 3, if not counted at step 3 (the prices need apple.com)
   7. a fetch slot: wait up to config.FETCH_SLOT_WAIT seconds for one
   8. the results cache again: the search ahead may have fetched this product
-  9. every store, in a background thread: rows are sent as they arrive, then
-     the finished set is cached
+  9. every store, on the shared event loop (web.py): rows are sent as they
+     arrive, then the finished set is cached
 
 The steps a search can produce, in order:
 
@@ -27,15 +27,18 @@ The steps a search can produce, in order:
   Finished           every row has been sent
   Failed             the search ends here, at any point, with this error
 """
-import asyncio
+import concurrent.futures
+import logging
 import queue
 import threading
 import time
 from dataclasses import dataclass
 from typing import Generator, Iterator, Optional, Union
 
-from . import config, exchange, limits, lookup, prices, results_cache
+from . import config, exchange, limits, lookup, prices, results_cache, web
 from .countries import COUNTRIES
+
+log = logging.getLogger(__name__)
 
 # Searches that fetch from apple.com at the same time (see config.MAX_PARALLEL_FETCHES).
 fetch_slots = threading.BoundedSemaphore(config.MAX_PARALLEL_FETCHES)
@@ -178,9 +181,9 @@ def run(product: str, client: str) -> Iterator[Step]:
         yield Failed(503, busy_payload())
         return
 
-    # This search holds a slot now. Nothing below yields until the background
-    # thread has taken it over, so a visitor who closes the page cannot leave
-    # it held; anything that fails before then gives it back.
+    # This search holds a slot now. Nothing below yields until the fetch has
+    # taken it over, so a visitor who closes the page cannot leave it held;
+    # anything that fails before then gives it back.
     hit = results_cache.get(slug)           # the search ahead may have fetched this product
     if hit:
         slots.release()
@@ -238,40 +241,47 @@ def _wait_for_slot(slots: threading.BoundedSemaphore) -> Generator[Step, None, b
 def _fetch_in_background(product: str, slug: str, category: str, rates: dict[str, float],
                          slot: threading.BoundedSemaphore) -> "queue.Queue[Step]":
     """
-    Start fetching every store in a background thread, which takes over `slot`
-    (a fetch slot this search holds). Returns the queue the thread puts its
-    steps on: a Row per store as each one answers, then Finished or Failed.
+    Start fetching every store on the shared event loop (see web.py), which
+    takes over `slot` (a fetch slot this search holds). Returns the queue the
+    fetch puts its steps on: a Row per store as each one answers, then
+    Finished or Failed.
 
-    The thread caches the finished set itself, so the fetch is not wasted if
-    the visitor closes the page part-way, and it gives the slot back only
-    after that: a search waiting for the slot then finds these prices in the
-    cache instead of fetching them again.
+    The fetch caches the finished set itself, so it is not wasted if the
+    visitor closes the page part-way, and the slot is given back only after
+    that: a search waiting for the slot then finds these prices in the cache
+    instead of fetching them again.
     """
     steps: "queue.Queue[Step]" = queue.Queue()
-    threading.Thread(target=_fetch_every_store, args=(product, slug, category, rates, slot, steps),
-                     daemon=True).start()
+    fetch = web.submit(_fetch_every_store(product, slug, category, rates, steps))
+    fetch.add_done_callback(lambda done: _hand_back(done, slug, slot, steps))
     return steps
 
 
-def _fetch_every_store(product: str, slug: str, category: str, rates: dict[str, float],
-                       slot: threading.BoundedSemaphore, steps: "queue.Queue[Step]") -> None:
+async def _fetch_every_store(product: str, slug: str, category: str, rates: dict[str, float],
+                             steps: "queue.Queue[Step]") -> int:
+    """Puts a Row on `steps` for each store, caches the finished set and returns how long it is kept."""
     rows: list[dict] = []
     complete = True                         # False once any store's answer may change soon
-    last: Step = Failed(503, fetch_failed_payload())    # unless every store answers
+    async for answer in prices.fetch_every_store(slug, category, rates):
+        complete = complete and not answer.transient
+        rows.append(answer.row)
+        steps.put(Row(answer.row))
+    return results_cache.put(slug, results_cache.build_payload(product, slug, category, rates, rows), complete)
 
-    async def collect():
-        nonlocal complete
-        async for answer in prices.fetch_every_store(slug, category, rates):
-            complete = complete and not answer.transient
-            rows.append(answer.row)
-            steps.put(Row(answer.row))
 
+def _hand_back(fetch: concurrent.futures.Future, slug: str, slot: threading.BoundedSemaphore,
+               steps: "queue.Queue[Step]") -> None:
+    """
+    When a fetch ends, however it ends (even cancelled before it started):
+    give the slot back, then send the search its last step.
+    """
+    last: Step = Failed(503, fetch_failed_payload())
     try:
-        asyncio.run(collect())
-        payload = results_cache.build_payload(product, slug, category, rates, rows)
-        last = Finished(results_cache.put(slug, payload, complete))
-    finally:                                # also when the fetch broke off (the error is still logged)
-        try:
-            slot.release()
-        finally:
-            steps.put(last)                 # the search never waits forever
+        slot.release()
+        if not fetch.cancelled():
+            if fetch.exception() is None:
+                last = Finished(fetch.result())
+            else:
+                log.error("Fetching the prices of %r broke off", slug, exc_info=fetch.exception())
+    finally:
+        steps.put(last)                     # the search never waits forever

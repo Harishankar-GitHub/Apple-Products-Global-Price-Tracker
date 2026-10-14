@@ -25,7 +25,7 @@ for path in (ROOT / "api", ROOT / "tests"):
 from app import app  # noqa: E402
 from fakes.apple import FakeApple, install, store_prefix  # noqa: E402
 from flask import request  # noqa: E402
-from tracker import config, exchange, limits, lookup, results_cache, search  # noqa: E402
+from tracker import config, exchange, limits, lookup, results_cache, search, web  # noqa: E402
 
 slow = {k: float(v) for k, v in (p.split("=") for p in os.environ.get("FAKE_APPLE_SLOW", "").split(",") if p)}
 jitter = os.environ.get("FAKE_APPLE_JITTER") == "1"
@@ -79,6 +79,7 @@ if os.environ.get("TEST_ROUTES") == "1":
             limiter.clear()
             limiter.limit = limit
         apple = install(FakeApple(delay=delay))
+        web.reset()                                  # new connections, to the new fake apple.com
         _offset[0] = 0.0
         return {"reset": True, "waited": round(_real_monotonic() - started, 1)}
 

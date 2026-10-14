@@ -10,7 +10,7 @@ Modules, roughly in the order a search uses them:
   results_cache  finished result sets per product
   exchange       exchange rates, kept for 30 minutes
   prices         reading a price off a store's page, and fetching every store at once
-  web            connections to apple.com
+  web            one event loop and connection pool for apple.com
   countries      the 50 stores: URL prefix, currency, symbol, flag
   config         every setting, including the environment variables
 """
