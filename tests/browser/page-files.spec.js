@@ -24,6 +24,14 @@ test('no inline script or event-handler attribute, in the page or in what the mo
   }
 });
 
+test('every font size is in rem, so all text follows the page\'s text size', () => {
+  const css = fs.readFileSync(path.join(DOCS, 'styles.css'), 'utf8');
+  const sizes = [...css.matchAll(/font-size:\s*([^;}]+)/g)].map(m => m[1].trim());
+  expect(sizes.length).toBeGreaterThan(40);
+  expect(sizes.filter(v => /^[\d.]+px$/.test(v))).toEqual([]);                    // none set in plain px
+  expect(css).toMatch(/html \{ font-size: clamp\(100%, [^;]+, 112\.5%\); \}/);
+});
+
 test('each file is fetched once and found', async ({ page }) => {
   const fetched = [];
   page.on('response', r => {
