@@ -47,7 +47,7 @@ The countries are one table, `api/tracker/countries.json`: name, ISO code, regio
 apple-global-price-tracker/
 ├── docs/                   # The website (GitHub Pages), no build step
 │   ├── index.html          # The page's markup
-│   ├── styles.css          # All of its styles
+│   ├── styles.css          # All of its styles; the light and dark mode colours are tokens at the top
 │   ├── js/                 # Its script, as native JavaScript modules
 │   │   ├── main.js         #   Starts the page and connects the controls to the code
 │   │   ├── config.js       #   The API's address: the live one, or the one on this computer
