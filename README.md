@@ -20,7 +20,7 @@ Backend API (Render): https://apple-products-global-price-tracker.onrender.com
 2. The API resolves the correct apple.com slug — checking a known-good override table first, then probing apple.com live if needed
 3. All 50 country requests fire **simultaneously** via `aiohttp`, on one event loop and connection pool that every search shares (no worker pool)
 4. Each country result is pushed to the browser via **Server-Sent Events (SSE)** the moment it arrives — the table updates live
-5. Prices are extracted from Apple's embedded JSON-LD `"lowPrice"` field — no JavaScript execution needed
+5. Prices are read from Apple's embedded structured data (JSON-LD `"lowPrice"`) — no JavaScript execution needed
 6. Prices are converted to USD using live exchange rates from [open.er-api.com](https://open.er-api.com)
 7. Results are ranked cheapest-first with animated FLIP transitions as the sort order changes
 
@@ -474,6 +474,14 @@ Apple embeds a JSON-LD `AggregateOffer` block in their `/shop/buy-<category>/<sl
 
 This `lowPrice` is the **base model starting price** — present in static HTML (no JS execution needed). It matches the "From $X" price shown on Apple's product pages.
 
+The price is read in this order, taking the first figure at or above the sanity floor (below):
+
+1. the page's structured data (`<script type="application/ld+json">` blocks): each offer's `lowPrice`, or its `price` if it has no `lowPrice`
+2. any other `"lowPrice"` in the page
+3. any `"amount"` in the page (Apple also uses this for monthly instalments, which the floor rules out)
+
+Numbers may be written with or without quotes (`999.00` or `"999.00"`). A block that is not valid JSON is skipped, and a figure that is not a positive number is ignored. Before, only the first `"lowPrice"` and the first `"amount"` were looked at, so a page with no usable `"lowPrice"` whose first `"amount"` was an instalment showed "Price not found".
+
 ### Requests per search
 
 A search has at most 50 requests open to `www.apple.com` at once — one per store (`APPLE_MAX_CONNECTIONS`). If Apple starts refusing requests, lower it with the environment variable of the same name; 10 is the old value.
@@ -484,7 +492,7 @@ Per store, the buy page is fetched first because it normally has the price. The 
 
 ### Sanity floor
 
-A page can also contain smaller numbers that are not the price — a monthly instalment, an accessory, a trade-in value — so a figure is only accepted if it is at least a minimum for that product family. The minimums are in US dollars (`get_min_price` in `api/tracker/prices.py`: iPhone 500, MacBook 800, AirTag 20, …).
+A page can also contain smaller numbers that are not the price — a monthly instalment, an accessory, a trade-in value — so a figure is only accepted if it is at least a minimum for that product family. The minimums are in US dollars, in the table `PRICE_FLOORS_USD` in `api/tracker/prices.py` (iPhone 500, MacBook 800, AirTag 20, …; 50 for anything else). The first family whose name is part of the product's slug applies, so a more specific name comes first (`ipad-pro` before `ipad`).
 
 Each store's price is in its own currency, so the minimum is converted with the current exchange rate before comparing (`local_min_price`), and applied with 20% room under it (`PRICE_FLOOR_SLACK`) for stores that price a product below the US price. For an iPhone that is $400 in the US, about 124 KWD in Kuwait and ₹33,600 in India.
 
