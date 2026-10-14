@@ -23,8 +23,9 @@ workers = 1
 # …with a pool of threads, so visitors are served side by side. The default
 # "sync" worker handles one request at a time: a search held up everyone else.
 # Most threads spend their time waiting (on Apple, or for a fetch slot — see
-# MAX_PARALLEL_FETCHES in app.py), so they are cheap; having more of them keeps
-# cached searches and health checks from queueing behind searches that wait.
+# MAX_PARALLEL_FETCHES in tracker/config.py), so they are cheap; having more of
+# them keeps cached searches and health checks from queueing behind searches
+# that wait.
 worker_class = "gthread"
 threads = _int_env("WEB_THREADS", 16)
 

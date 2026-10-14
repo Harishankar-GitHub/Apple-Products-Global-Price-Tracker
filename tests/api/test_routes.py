@@ -37,13 +37,23 @@ def test_local_price_formatting(server, product, country, formatted):
     assert server.search(product).row(country)["localPriceFormatted"] == formatted
 
 
-def test_unknown_product(server, via):
-    result = server.search("Nonexistent Thing", via=via)
-    assert "Could not find" in result.error["error"] and "Nonexistent Thing" in result.error["error"]
-    if via == "json":
-        assert result.status == 404
-    else:
-        assert [e.name for e in result.events] == ["searching", "error"]
+@pytest.mark.parametrize(
+    ("product", "outage", "status", "events"),
+    [
+        (None, None, 400, ["error"]),
+        ("x" * 81, None, 400, ["error"]),
+        ("Nonexistent Thing", None, 404, ["searching", "error"]),
+        ("MacBook Air", "timeout", 503, ["searching", "error"]),
+    ],
+    ids=["missing-name", "name-too-long", "not-found", "apple-not-answering"],
+)
+def test_a_failed_search_ends_the_same_way_on_both_endpoints(server, apple, product, outage, status, events):
+    apple.outage = outage
+    resp = server.get(product)
+    streamed = server.stream(product)
+    assert resp.status_code == status
+    assert [e.name for e in streamed] == events
+    assert streamed[-1].data == resp.get_json()                       # the same message, word for word
 
 
 def test_page_on_another_site_may_call_the_api(client):

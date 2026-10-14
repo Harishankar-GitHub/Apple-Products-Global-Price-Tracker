@@ -6,9 +6,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-import app as api
+from tracker import limits, results_cache
 
-LIMITERS = (api._request_limiter, api._fetch_limiter, api._global_fetch_limiter)
+LIMITERS = (limits.request_limiter, limits.fetch_limiter, limits.global_fetch_limiter)
 
 
 class Clock:
@@ -114,4 +114,4 @@ class Api:
 
 def cached_ttl(slug: str) -> int:
     """How long the results cache keeps `slug` (seconds)."""
-    return api._results_cache[slug]["ttl"]
+    return results_cache._entries[slug]["ttl"]

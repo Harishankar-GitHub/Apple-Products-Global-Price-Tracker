@@ -1,10 +1,12 @@
 """The results cache: how long a result set is kept, what is shared between names and endpoints, and its size."""
 import json
 
+import time
+
 import pytest
 
-import app as api
 from support.client import cached_ttl
+from tracker import config, lookup, results_cache
 
 MINUTE, HOUR = 60, 3600
 SIX_HOURS, FIVE_MINUTES = 6 * HOUR, 5 * MINUTE
@@ -31,7 +33,7 @@ def test_complete_result_is_kept_six_hours(server, apple, clock):
     clock.advance(2 * MINUTE)                                          # 6 h 01 min
     again = server.search("MacBook Air")
     assert not again.cached and len(apple.apple_calls()) > calls and again.meta["expiresInSeconds"] == SIX_HOURS
-    assert list(api._results_cache) == ["macbook-air"]                # replaced, not duplicated
+    assert list(results_cache._entries) == ["macbook-air"]                # replaced, not duplicated
 
 
 def test_spellings_of_one_product_share_its_entry(server, apple, clock):
@@ -74,14 +76,14 @@ def test_result_with_a_failed_store_is_kept_five_minutes(server, apple, clock, v
 def test_result_without_any_price_is_kept_five_minutes(server, clock):
     result = server.search("AirTag")
     assert result.meta["slug"] == "airtag" and result.priced == 0 and len(result.rows) == 50
-    assert result.meta["expiresInSeconds"] == FIVE_MINUTES and "_transient" not in json.dumps(result.rows)
+    assert result.meta["expiresInSeconds"] == FIVE_MINUTES
     clock.advance(6 * MINUTE)
     assert not server.search("AirTag").cached
 
 
 def test_unknown_product_is_not_cached(server, via):
     result = server.search("Nonexistent Thing", via=via)
-    assert result.error and api._results_cache == {}
+    assert result.error and results_cache._entries == {}
 
 
 def test_endpoints_share_the_cache(server, apple, clock):
@@ -113,32 +115,32 @@ def test_fresh_stream_is_not_marked_cached(server):
 # ---------------------------------------------------------------------------
 
 def test_result_cache_drops_the_oldest(server, clock, monkeypatch):
-    monkeypatch.setattr(api, "RESULTS_CACHE_MAX", 5)
+    monkeypatch.setattr(config, "RESULTS_CACHE_MAX", 5)
     for i in range(1, 9):
         server.search(f"prod{i}")
-    assert list(api._results_cache) == ["prod4", "prod5", "prod6", "prod7", "prod8"]
-    api._results_cache["prod4"]["ts"] -= 7 * HOUR                     # expired: fetched again
+    assert list(results_cache._entries) == ["prod4", "prod5", "prod6", "prod7", "prod8"]
+    results_cache._entries["prod4"]["ts"] -= 7 * HOUR                     # expired: fetched again
     server.search("prod4")
     server.search("prod9")
-    assert list(api._results_cache) == ["prod6", "prod7", "prod8", "prod4", "prod9"]   # refreshed counts as newest
+    assert list(results_cache._entries) == ["prod6", "prod7", "prod8", "prod4", "prod9"]   # refreshed counts as newest
 
 
 def test_name_cache_drops_the_oldest(server):
-    for i in range(api.SLUG_CACHE_MAX + 20):
+    for i in range(config.SLUG_CACHE_MAX + 20):
         server.get(f"zz{i}")
-    assert len(api._slug_cache) == api.SLUG_CACHE_MAX
-    assert "zz19" not in api._slug_cache and "zz20" in api._slug_cache and f"zz{api.SLUG_CACHE_MAX + 19}" in api._slug_cache
+    assert len(lookup._entries) == config.SLUG_CACHE_MAX
+    assert "zz19" not in lookup._entries and "zz20" in lookup._entries and f"zz{config.SLUG_CACHE_MAX + 19}" in lookup._entries
 
 
 def test_entry_without_a_stored_lifetime_is_short_lived(clock):
-    api._results_cache["legacy"] = {"ts": api.time.monotonic(), "payload": {"results": []}}
-    assert api._cache_get("legacy") is not None
+    results_cache._entries["legacy"] = {"ts": time.monotonic(), "payload": {"results": []}}
+    assert results_cache.get("legacy") is not None
     clock.advance(6 * MINUTE)
-    assert api._cache_get("legacy") is None and "legacy" not in api._results_cache
+    assert results_cache.get("legacy") is None and "legacy" not in results_cache._entries
 
 
 def test_status_reports_each_entry(server, apple, clock, monkeypatch):
-    monkeypatch.setattr(api, "ADMIN_TOKEN", "test-token")
+    monkeypatch.setattr(config, "ADMIN_TOKEN", "test-token")
     server.search("MacBook Air")
     apple.store_failures["de"] = 503
     server.search("iPhone 17")

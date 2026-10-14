@@ -1,14 +1,16 @@
 """Turning what was typed into Apple's product page: names, closest matches, failed and stale look-ups."""
+import time
+
 import pytest
 
-import app as api
 from fakes.apple import store_prefix
+from tracker import lookup, results_cache
 
 FIVE_MINUTES, HOUR = 5 * 60, 3600
 
 
 def remembered(name: str):
-    return api._slug_cache.get(name)
+    return lookup._entries.get(name)
 
 
 def store_requests(apple, slug_fragment: str) -> list[str]:
@@ -31,7 +33,7 @@ def store_requests(apple, slug_fragment: str) -> list[str]:
      ("", "")],
 )
 def test_display_name(slug, name):
-    assert api.display_name(slug) == name
+    assert lookup.display_name(slug) == name
 
 
 @pytest.mark.parametrize(
@@ -43,7 +45,7 @@ def test_display_name(slug, name):
      ("AirTag", "airtag"), ("Mac mini!", "mac-mini")],
 )
 def test_same_product_is_not_flagged(typed, slug):
-    assert api.match_info(typed, slug)["substituted"] is False
+    assert lookup.match_info(typed, slug)["substituted"] is False
 
 
 @pytest.mark.parametrize(
@@ -54,7 +56,7 @@ def test_same_product_is_not_flagged(typed, slug):
      ("HomePod", "homepod-2nd-generation"), ("iPad Pro", "ipad-air"), ("apple", "apple-watch")],
 )
 def test_different_product_is_flagged(typed, slug):
-    assert api.match_info(typed, slug)["substituted"] is True
+    assert lookup.match_info(typed, slug)["substituted"] is True
 
 
 @pytest.mark.parametrize("typed", ["Apple Watch Ultra 2", "Apple Watch Ultra", "Apple Watch Ultra 3"])
@@ -108,19 +110,19 @@ def test_built_in_name_is_checked_once_then_remembered(server, apple):
 
 def test_retired_built_in_name_is_not_found(server):
     resp = server.get("iPhone 16 Pro")
-    assert resp.status_code == 404 and api._results_cache == {}
+    assert resp.status_code == 404 and results_cache._entries == {}
     assert remembered("iphone 16 pro")["failed"] is False and remembered("iphone 16 pro")["expires"] is not None
 
 
 def test_stale_table_entry_falls_back_to_discovery(server, apple, monkeypatch):
-    monkeypatch.setitem(api.SLUG_OVERRIDES, "apple watch ultra", ("apple-watch-ultra-3", "watch"))
+    monkeypatch.setitem(lookup.SLUG_OVERRIDES, "apple watch ultra", ("apple-watch-ultra-3", "watch"))
     result = server.search("Apple Watch Ultra")
     assert result.meta["slug"] == "apple-watch-ultra-4" and result.meta["substituted"] is True and result.priced == 30
     assert not store_requests(apple, "apple-watch-ultra-3")             # no store was asked for the retired model
 
 
 def test_stale_table_entry_with_nothing_to_fall_back_on_is_not_found(server, monkeypatch):
-    monkeypatch.setitem(api.SLUG_OVERRIDES, "apple watch ultra 2", ("apple-watch-ultra-3", "watch"))
+    monkeypatch.setitem(lookup.SLUG_OVERRIDES, "apple watch ultra 2", ("apple-watch-ultra-3", "watch"))
     assert server.get("Apple Watch Ultra 2").status_code == 404
 
 
@@ -161,7 +163,7 @@ def test_apple_not_answering_is_try_again_not_not_found(server, apple, clock, fa
     assert resp.status_code == 503 and body["temporary"] is True
     assert "Apple did not respond" in body["error"] and "MacBook Air" in body["error"] and "Could not find" not in body["error"]
     assert 1 <= body["retryAfterSeconds"] <= 60 and resp.headers["Retry-After"] == str(body["retryAfterSeconds"])
-    assert api._results_cache == {}
+    assert results_cache._entries == {}
     apple.outage = None
     clock.advance(61)
     result = server.search("MacBook Air")
@@ -211,7 +213,7 @@ def test_one_failed_check_is_enough_to_say_try_again(server, apple, clock, faili
 def test_outage_while_checking_a_built_in_name(server, apple, clock):
     apple.outage = "timeout"
     resp = server.get("Apple Watch Ultra 2")
-    assert resp.status_code == 503 and resp.get_json()["temporary"] is True and api._results_cache == {}
+    assert resp.status_code == 503 and resp.get_json()["temporary"] is True and results_cache._entries == {}
     apple.outage = None
     clock.advance(61)
     result = server.search("Apple Watch Ultra 2")
@@ -224,7 +226,7 @@ def test_fallback_found_while_a_check_failed_is_kept_five_minutes(server, apple,
     fallback = server.search("iPhone 17 Pro Max")
     assert fallback.meta["slug"] == "iphone-17" and fallback.meta["substituted"] is True
     entry = remembered("iphone 17 pro max")
-    assert entry["failed"] is False and 290 <= entry["expires"] - api.time.monotonic() <= FIVE_MINUTES
+    assert entry["failed"] is False and 290 <= entry["expires"] - time.monotonic() <= FIVE_MINUTES
     apple.url_failures.clear()
     clock.advance(4 * 60)
     assert server.search("iPhone 17 Pro Max").meta["slug"] == "iphone-17"
@@ -266,10 +268,10 @@ def test_new_product_is_found_within_the_hour_without_a_restart(server, apple, c
 
 def test_known_name_lookup_is_normalised_and_expires(server, clock):
     server.get("Nonexistent Thing")
-    assert api.slug_is_known("Nonexistent Thing") and api.slug_is_known("  NONEXISTENT thing ")
+    assert lookup.slug_is_known("Nonexistent Thing") and lookup.slug_is_known("  NONEXISTENT thing ")
     clock.advance(HOUR + 1)
-    assert not api.slug_is_known("Nonexistent Thing")
-    assert "nonexistent thing" not in api._slug_cache
+    assert not lookup.slug_is_known("Nonexistent Thing")
+    assert "nonexistent thing" not in lookup._entries
 
 
 # ---------------------------------------------------------------------------

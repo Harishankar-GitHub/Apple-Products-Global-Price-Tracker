@@ -3,8 +3,8 @@ import threading
 
 import pytest
 
-import app as api
 from support.client import LIMITERS
+from tracker import config, limits, lookup, results_cache
 
 A, B, C, D = "198.51.100.1", "198.51.100.2", "198.51.100.3", "198.51.100.4"
 
@@ -17,8 +17,8 @@ def codes(responses) -> set:
 # Requests per visitor
 # ---------------------------------------------------------------------------
 
-def test_requests_per_visitor(server, clock, limits):
-    limits()
+def test_requests_per_visitor(server, clock, limits_on):
+    limits_on()
     answered = [server.get("MacBook Air", A) for _ in range(60)]
     refused = server.get("MacBook Air", A)
     body = refused.get_json()
@@ -32,8 +32,8 @@ def test_requests_per_visitor(server, clock, limits):
     assert server.get("MacBook Air", A).status_code == 200            # …which ends a minute after the first
 
 
-def test_window_slides(server, clock, limits):
-    limits()
+def test_window_slides(server, clock, limits_on):
+    limits_on()
     for _ in range(30):
         server.get("MacBook Air", A)
     clock.advance(40)
@@ -49,15 +49,15 @@ def test_window_slides(server, clock, limits):
 # Apple look-ups
 # ---------------------------------------------------------------------------
 
-def test_look_ups_per_visitor(server, apple, clock, limits):
-    limits()
+def test_look_ups_per_visitor(server, apple, clock, limits_on):
+    limits_on()
     fetched = [server.get(f"prod{i}", A) for i in range(1, 21)]
-    assert codes(fetched) == {200} and api._fetch_limiter.count(A) == 20
+    assert codes(fetched) == {200} and limits.fetch_limiter.count(A) == 20
     calls = len(apple.calls)
     refused = server.get("prod21", A)
     body = refused.get_json()
     assert refused.status_code == 429 and len(apple.calls) == calls             # Apple not contacted
-    assert "prod21" not in api._slug_cache and "prod21" not in api._results_cache
+    assert "prod21" not in lookup._entries and "prod21" not in results_cache._entries
     assert "looked up a lot of products" in body["error"] and "minutes" in body["error"]
     assert 1 <= body["retryAfterSeconds"] <= 600 and refused.headers["Retry-After"] == str(body["retryAfterSeconds"])
     assert server.search("prod5", ip=A).cached                                 # cached products still served
@@ -67,58 +67,65 @@ def test_look_ups_per_visitor(server, apple, clock, limits):
     assert server.get("prod22", A).status_code == 200
 
 
+PRICES_DROPPED = None          # in a list of searches: the cached prices are dropped (the name stays known)
+
+
 @pytest.mark.parametrize(
     ("searches", "cost"),
     [(["MacBook Air"], 1),                                      # name and prices: one look-up, not two
      (["MacBook Air", "MacBook Air", "macbook air"], 1),        # cached repeats are free
-     (["MacBook Air", "iPhone 17"], 2)],                        # a built-in name still costs one for its prices
-    ids=["new-product", "cached-repeats", "built-in-name"],
+     (["MacBook Air", "iPhone 17"], 2),                         # a built-in name still costs one for its prices
+     (["MacBook Air", PRICES_DROPPED, "MacBook Air"], 2)],      # a known name costs one when its prices are fetched
+    ids=["new-product", "cached-repeats", "built-in-name", "known-name-prices-not-cached"],
 )
-def test_what_a_search_costs(server, limits, searches, cost):
-    limits()
+def test_what_a_search_costs(server, limits_on, searches, cost):
+    limits_on()
     for name in searches:
-        server.get(name, A)
-    assert api._fetch_limiter.count(A) == cost and api._global_fetch_limiter.count("all") == cost
+        if name is PRICES_DROPPED:
+            results_cache.clear()
+        else:
+            server.get(name, A)
+    assert limits.fetch_limiter.count(A) == cost and limits.global_fetch_limiter.count("all") == cost
 
 
-def test_unknown_names_count_but_known_wrong_names_are_free(server, apple, limits):
-    limits()
+def test_unknown_names_count_but_known_wrong_names_are_free(server, apple, limits_on):
+    limits_on()
     assert codes(server.get(f"zz nonsense {i}", A) for i in range(20)) == {404}
     calls = len(apple.calls)
     assert server.get("zz nonsense 20", A).status_code == 429 and len(apple.calls) == calls
     assert server.get("zz nonsense 3", A).status_code == 404 and len(apple.calls) == calls
 
 
-def test_failed_look_up_costs_one_and_held_retries_are_free(server, apple, clock, limits):
-    limits()
+def test_failed_look_up_costs_one_and_held_retries_are_free(server, apple, clock, limits_on):
+    limits_on()
     apple.outage = "timeout"
     server.get("Mac mini", A)
-    assert api._fetch_limiter.count(A) == 1
+    assert limits.fetch_limiter.count(A) == 1
     clock.advance(10)
     server.get("Mac mini", A)
     server.get("mac mini", A)
-    assert api._fetch_limiter.count(A) == 1
+    assert limits.fetch_limiter.count(A) == 1
     clock.advance(55)
     server.get("Mac mini", A)
-    assert api._fetch_limiter.count(A) == 2
+    assert limits.fetch_limiter.count(A) == 2
 
 
-def test_look_ups_for_everyone_together(server, apple, clock, limits):
-    limits()
+def test_look_ups_for_everyone_together(server, apple, clock, limits_on):
+    limits_on()
     for ip, first in ((A, 1), (B, 21), (C, 41)):
         assert codes(server.get(f"prod{i}", ip) for i in range(first, first + 20)) == {200}
-    assert api._global_fetch_limiter.count("all") == 60
+    assert limits.global_fetch_limiter.count("all") == 60
     calls = len(apple.calls)
     refused = server.get("prod61", D)
     assert refused.status_code == 429 and "busy fetching prices" in refused.get_json()["error"]
-    assert len(apple.calls) == calls and api._fetch_limiter.count(D) == 0      # not charged to that visitor
+    assert len(apple.calls) == calls and limits.fetch_limiter.count(D) == 0      # not charged to that visitor
     assert server.search("prod7", ip=D).cached
     clock.advance(601)
-    assert server.get("prod61", D).status_code == 200 and api._fetch_limiter.count(D) == 1
+    assert server.get("prod61", D).status_code == 200 and limits.fetch_limiter.count(D) == 1
 
 
-def test_shared_limit_holds_against_changing_addresses(server, limits):
-    limits()
+def test_shared_limit_holds_against_changing_addresses(server, limits_on):
+    limits_on()
     assert codes(server.get(f"prod{i}", f"203.0.113.{i}") for i in range(1, 61)) == {200}
     refused = server.get("prod61", "203.0.113.200")
     assert refused.status_code == 429 and "busy" in refused.get_json()["error"]
@@ -128,16 +135,16 @@ def test_shared_limit_holds_against_changing_addresses(server, limits):
 # The stream the page uses
 # ---------------------------------------------------------------------------
 
-def test_too_many_requests_in_the_stream(server, limits):
-    limits()
+def test_too_many_requests_in_the_stream(server, limits_on):
+    limits_on()
     assert {server.stream("MacBook Air", A)[-1].name for _ in range(60)} == {"done"}
     events = server.stream("MacBook Air", A)
     assert [e.name for e in events] == ["error"]
     assert events[0].data["rateLimited"] is True and "Too many requests" in events[0].data["error"]
 
 
-def test_look_up_limit_in_the_stream(server, apple, limits):
-    limits()
+def test_look_up_limit_in_the_stream(server, apple, limits_on):
+    limits_on()
     for i in range(1, 21):
         server.get(f"prod{i}", A)
     calls = len(apple.calls)
@@ -147,11 +154,11 @@ def test_look_up_limit_in_the_stream(server, apple, limits):
     assert events[1].data["retryAfterSeconds"] > 0
     cached = server.search("prod5", via="stream", ip=A)
     assert cached.cached and cached.events[-1].name == "done" and len(cached.rows) == 50
-    assert server.stream("prod30", B)[-1].name == "done" and api._fetch_limiter.count(B) == 1
+    assert server.stream("prod30", B)[-1].name == "done" and limits.fetch_limiter.count(B) == 1
 
 
-def test_shared_limit_in_the_stream(server, limits):
-    limits()
+def test_shared_limit_in_the_stream(server, limits_on):
+    limits_on()
     for i in range(1, 61):
         server.get(f"prod{i}", f"203.0.113.{i}")
     events = server.stream("prod99", D)
@@ -175,18 +182,18 @@ def test_shared_limit_in_the_stream(server, limits):
     ],
     ids=["cf-header-wins", "first-forwarded-address", "different-forwarded-address", "connection-address"],
 )
-def test_visitor_identity(server, limits, first, others, same_visitor):
-    limits(requests=3)
+def test_visitor_identity(server, limits_on, first, others, same_visitor):
+    limits_on(requests=3)
     responses = [server.get("MacBook Air", headers=h) for h in [first, *others]]
     assert [r.status_code for r in responses] == ([200, 200, 200, 429] if same_visitor else [200, 200, 200, 200])
 
 
-def test_odd_address_headers(server, limits):
-    limits(requests=3)
+def test_odd_address_headers(server, limits_on):
+    limits_on(requests=3)
     assert server.get("MacBook Air", "x" * 500).status_code == 200
     assert server.get("MacBook Air", "2001:db8::1").status_code == 200
-    assert max(len(k) for k in api._request_limiter._events) <= 64
-    assert "2001:db8::1" in api._request_limiter._events
+    assert max(len(k) for k in limits.request_limiter._events) <= 64
+    assert "2001:db8::1" in limits.request_limiter._events
 
 
 def test_limits_set_to_zero_are_off(server):
@@ -199,7 +206,7 @@ def test_limits_set_to_zero_are_off(server):
 # ---------------------------------------------------------------------------
 
 def test_limiter_tracks_at_most_10000_visitors(clock):
-    limiter = api.SlidingWindowLimiter(5, 600)
+    limiter = limits.SlidingWindowLimiter(5, 600)
     for i in range(10_050):
         limiter.hit(f"k{i}")
     assert limiter.tracked() <= 10_000 and limiter.hit("k10049") == 0
@@ -209,7 +216,7 @@ def test_limiter_tracks_at_most_10000_visitors(clock):
 
 
 def test_limiter_is_exact_under_concurrency():
-    limiter = api.SlidingWindowLimiter(500, 600)
+    limiter = limits.SlidingWindowLimiter(500, 600)
     allowed = []
 
     def hammer():
@@ -230,15 +237,15 @@ def test_limiter_is_exact_under_concurrency():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize(("product", "message"), [("x" * 81, "too long"), (None, "Missing")], ids=["81-characters", "missing"])
-def test_bad_product_parameter_is_refused_before_any_work(server, apple, limits, via, product, message):
-    limits()
+def test_bad_product_parameter_is_refused_before_any_work(server, apple, limits_on, via, product, message):
+    limits_on()
     if via == "json":
         resp = server.get(product, A)
         assert resp.status_code == 400 and message in resp.get_json()["error"]
     else:
         events = server.stream(product, A)
         assert [e.name for e in events] == ["error"] and message in events[0].data["error"]
-    assert apple.calls == [] and api._slug_cache == {} and api._fetch_limiter.count(A) == 0
+    assert apple.calls == [] and lookup._entries == {} and limits.fetch_limiter.count(A) == 0
 
 
 def test_80_character_name_is_accepted(server):
@@ -250,9 +257,9 @@ def test_80_character_name_is_accepted(server):
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def searched(server, limits):
+def searched(server, limits_on):
     """Three visitors have searched; limits are on, so the status page has counts to show."""
-    limits()
+    limits_on()
     server.get("MacBook Air", A)
     server.get("zz secret gift idea", B)
     server.get("iPhone 17", C)
@@ -288,7 +295,7 @@ def test_nothing_unlocks_details_without_a_configured_token(server, searched, he
     ids=["short", "long", "case", "empty", "wrong-bearer", "bearer-missing", "non-ascii"],
 )
 def test_wrong_tokens_are_refused(server, searched, monkeypatch, headers):
-    monkeypatch.setattr(api, "ADMIN_TOKEN", "s3cret-token-123")
+    monkeypatch.setattr(config, "ADMIN_TOKEN", "s3cret-token-123")
     body = server.status(headers=headers)
     assert "keys" not in body["slug_cache"] and "hidden" in body["details"]
 
@@ -303,7 +310,7 @@ def test_wrong_tokens_are_refused(server, searched, monkeypatch, headers):
     ids=["x-admin-token", "bearer", "bearer-lower-case", "forwarded"],
 )
 def test_correct_token_shows_details(server, searched, monkeypatch, headers, you):
-    monkeypatch.setattr(api, "ADMIN_TOKEN", "s3cret-token-123")
+    monkeypatch.setattr(config, "ADMIN_TOKEN", "s3cret-token-123")
     body = server.status(headers=headers)
     assert body["details"] == "shown"
     assert body["slug_cache"]["keys"] == ["macbook air", "zz secret gift idea", "iphone 17"]
@@ -311,9 +318,9 @@ def test_correct_token_shows_details(server, searched, monkeypatch, headers, you
     assert body["you"] == you
 
 
-def test_token_guessing_is_rate_limited(server, limits, monkeypatch):
-    limits()
-    monkeypatch.setattr(api, "ADMIN_TOKEN", "s3cret-token-123")
+def test_token_guessing_is_rate_limited(server, limits_on, monkeypatch):
+    limits_on()
+    monkeypatch.setattr(config, "ADMIN_TOKEN", "s3cret-token-123")
     statuses = [server.client.get("/api/cache/status", headers={"X-Admin-Token": f"guess{i}", "CF-Connecting-IP": A}).status_code
                 for i in range(61)]
     assert statuses == [200] * 60 + [429]
@@ -325,6 +332,6 @@ def test_status_shows_how_long_names_are_remembered(server):
 
 
 @pytest.mark.parametrize("path", ["/api/health", "/"])
-def test_unlimited_endpoints(client, limits, path):
-    limits()
+def test_unlimited_endpoints(client, limits_on, path):
+    limits_on()
     assert codes(client.get(path, headers={"CF-Connecting-IP": A}) for _ in range(300)) == {200}

@@ -22,9 +22,10 @@ for path in (ROOT / "api", ROOT / "tests"):
     if str(path) not in sys.path:
         sys.path.insert(0, str(path))
 
-import app as api  # noqa: E402
+from app import app  # noqa: E402
 from fakes.apple import FakeApple, install, store_prefix  # noqa: E402
 from flask import request  # noqa: E402
+from tracker import config, exchange, limits, lookup, results_cache, search  # noqa: E402
 
 slow = {k: float(v) for k, v in (p.split("=") for p in os.environ.get("FAKE_APPLE_SLOW", "").split(",") if p)}
 jitter = os.environ.get("FAKE_APPLE_JITTER") == "1"
@@ -42,39 +43,38 @@ def delay(url: str) -> float:
 
 
 apple = install(FakeApple(delay=delay))
-LIMITERS = (api._request_limiter, api._fetch_limiter, api._global_fetch_limiter)
+LIMITERS = (limits.request_limiter, limits.fetch_limiter, limits.global_fetch_limiter)
 DEFAULT_LIMITS = [limiter.limit for limiter in LIMITERS]
 if "FETCH_SLOT_NOTICE" in os.environ:
-    api.FETCH_SLOT_NOTICE = float(os.environ["FETCH_SLOT_NOTICE"])
+    config.FETCH_SLOT_NOTICE = float(os.environ["FETCH_SLOT_NOTICE"])
 
 if os.environ.get("TEST_ROUTES") == "1":
     _offset = [0.0]
     _real_monotonic = time.monotonic
     time.monotonic = lambda: _real_monotonic() + _offset[0]
 
-    @api.app.route("/__test/advance")
+    @app.route("/__test/advance")
     def _advance():
         """Move the server's clock forward: /__test/advance?seconds=7500"""
         _offset[0] += float(request.args.get("seconds", 0))
         return {"offset": _offset[0]}
 
-    @api.app.route("/__test/outage")
+    @app.route("/__test/outage")
     def _outage():
         """apple.com stops answering (mode=timeout or a status code) or comes back (mode=off)."""
         mode = request.args.get("mode", "off")
         apple.outage = None if mode == "off" else (int(mode) if mode.isdigit() else mode)
         return {"outage": str(apple.outage)}
 
-    @api.app.route("/__test/reset")
+    @app.route("/__test/reset")
     def _reset():
         """A clean server: no fetch still running, empty caches, default limits, apple.com answering, real time."""
         global apple
         started = _real_monotonic()
-        while api._fetch_slots._value < api.MAX_PARALLEL_FETCHES and _real_monotonic() - started < 60:
+        while search.fetch_slots._value < config.MAX_PARALLEL_FETCHES and _real_monotonic() - started < 60:
             time.sleep(0.1)                          # a closed page's fetch finishes in the background
-        api._results_cache.clear()
-        api._slug_cache.clear()
-        api._rates_cache = {}
+        for cache in (results_cache, lookup, exchange):
+            cache.clear()
         for limiter, limit in zip(LIMITERS, DEFAULT_LIMITS):
             limiter.clear()
             limiter.limit = limit
@@ -82,7 +82,7 @@ if os.environ.get("TEST_ROUTES") == "1":
         _offset[0] = 0.0
         return {"reset": True, "waited": round(_real_monotonic() - started, 1)}
 
-    @api.app.route("/__test/limits")
+    @app.route("/__test/limits")
     def _limits():
         """Change the rate limits: /__test/limits?requests=60&lookups=2&all=60"""
         for limiter, name in zip(LIMITERS, ("requests", "lookups", "all")):
@@ -90,14 +90,13 @@ if os.environ.get("TEST_ROUTES") == "1":
                 limiter.limit = int(request.args[name])
         return {"limits": [limiter.limit for limiter in LIMITERS]}
 
-    @api.app.route("/__test/rates")
+    @app.route("/__test/rates")
     def _rates():
         """Leave a currency out of the exchange rates: /__test/rates?drop=INR"""
         apple.rates.pop(request.args.get("drop", ""), None)
-        api._rates_cache = {}
+        exchange.clear()
         return {"rates": sorted(apple.rates)}
 
-app = api.app
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=int(os.environ.get("PORT", 5055)), threaded=True, use_reloader=False)
