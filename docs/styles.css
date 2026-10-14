@@ -63,6 +63,17 @@
    wider windows, to 12.5% more (18px) at 2560px and above, so text stays a
    comfortable size on a large monitor. Spacing does not grow with it. */
 html { font-size: clamp(100%, 100% + (100vw - 1440px) * .0017857, 112.5%); }
+
+/* Country flags where the system has none (Windows shows the two letters instead):
+   js/flags.js adds .flag-font to <html> there. The font holds only the flags
+   (unicode-range), so all other text keeps the page's fonts. Artwork: Twemoji,
+   CC-BY 4.0 (see fonts/LICENSE.md). */
+@font-face {
+  font-family: "Country Flags";
+  src: url("fonts/twemoji-country-flags.woff") format("woff");
+  unicode-range: U+1F1E6-1F1FF;
+  font-display: swap;
+}
 body {
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
                "Segoe UI", Helvetica, Arial, sans-serif;
@@ -70,6 +81,10 @@ body {
   color: var(--text);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
+}
+.flag-font body {
+  font-family: "Country Flags", -apple-system, BlinkMacSystemFont, "SF Pro Display",
+               "Segoe UI", Helvetica, Arial, sans-serif;
 }
 
 /* ─── Header ─────────────────────────────────────────────────────────────── */

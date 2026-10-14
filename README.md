@@ -36,6 +36,7 @@ Backend API (Render): https://apple-products-global-price-tracker.onrender.com
 - **Fits large monitors** — the page widens with the window (from 1100px up to 2400px, with about 4% margin on each side) and text grows gently with it (the browser's normal size up to a 1440px window, 12.5% larger from 2560px). The extra room goes to the results: the currency column next to the chart from 1600px, and from 1900px the chart gets half the width with each country's name, bar and price on one line. Phones, tablets and laptops up to 1100px look exactly as before.
 - **CSV export** — downloads the rows currently shown.
 - **Clear empty states** — if no country returns a price the page says "No prices found for … in any country" (tick *Show unavailable* to see what each country returned); "No countries match these filters" is used only when a filter is the reason.
+- **Flags everywhere** — each country's flag is an emoji, which Windows doesn't draw (it shows the two letters, "IE" for Ireland). There the page loads a small font of flags (about 100 KB, once); other systems keep their own flags and never download it.
 - **Closest-match notice** — if the prices are for a different product than the one typed (for example a retired model mapped to the current one), the page says which product it is showing.
 
 The countries are one table, `api/tracker/countries.json`: name, ISO code, region, the store's URL prefix on apple.com, currency and symbol (flags are worked out from the ISO code). The API reads it; the page gets a copy, `docs/js/countries.js`, because GitHub Pages serves only `docs/` and Render only `api/`. To add or change a store, edit the table and run `python3 scripts/sync_countries.py`, which also updates the list under [Supported Countries](#supported-countries); the tests fail if a copy is out of date. The product names offered as you type are in `docs/js/data.js` (`PRODUCTS`) — update them when Apple's line-up changes. All prices are compared exactly as Apple lists them; note that the US and Canada list prices before sales tax while most other stores include VAT/GST. Preferences are stored in `localStorage` under `apgt:prefs:v1`.
@@ -68,7 +69,9 @@ apple-global-price-tracker/
 │   │   ├── data.js         #   Countries, regions and currencies (from countries.js), product names
 │   │   ├── countries.js    #   Copy of api/tracker/countries.json, written by scripts/sync_countries.py
 │   │   ├── format.js       #   Money, durations, percentages
+│   │   ├── flags.js        #   Country flags on Windows, which has no flag emoji
 │   │   └── dom.js          #   Small DOM helpers
+│   ├── fonts/              # The flag font used on Windows (Twemoji, CC-BY 4.0; see its LICENSE.md)
 │   └── og.png              # Image shown when a link to the site is shared
 ├── assets/
 │   └── og-image.html       # Source of og.png
@@ -532,6 +535,7 @@ Comparing the dollar figure directly, as before, went wrong in both directions: 
 | Bridge | One `asyncio` event loop in a background thread, with one shared `aiohttp` session (`api/tracker/web.py`); request threads hand it work and read the rows through a `queue.Queue`. Both price endpoints run the same search (`api/tracker/search.py`) |
 | Hosting | GitHub Pages (frontend) · Render free tier (backend) |
 | Exchange rates | [open.er-api.com](https://open.er-api.com) |
+| Flags on Windows | [Twemoji](https://github.com/twitter/twemoji) artwork ([CC-BY 4.0](https://creativecommons.org/licenses/by/4.0/)), as a font reduced to the country flags — see `docs/fonts/LICENSE.md` |
 
 ---
 
