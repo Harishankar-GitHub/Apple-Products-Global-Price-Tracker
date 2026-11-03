@@ -1,5 +1,5 @@
 # For running the tests and the linter: what the API needs, plus the tools.
 #   pip install -r requirements-dev.txt
 -r api/requirements.txt
-pytest==9.1.1
-ruff==0.17.0
+pytest==9.2.0
+ruff==0.17.3
